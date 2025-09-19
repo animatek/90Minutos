@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Animatek Timer — Panel</title>
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <header>
+    <h1>Animatek Timer — Panel</h1>
+    <nav>
+      <a href="/overlay/index.html" target="_blank">Abrir Overlay</a>
+      <a id="openSheet" href="#" target="_blank">Abrir base de datos</a>
+      <button id="btnAuth">Conectar Google</button>
+    </nav>
+  </header>
+
+  <section class="card">
+    <h2>Control remoto</h2>
+    <div class="row">
+      <button id="rcStart">Start</button>
+      <button id="rcPause">Pause</button>
+      <button id="rcResume">Resume</button>
+      <button id="rcReset">Reset</button>
+      <button id="rcAdd1">+1</button>
+      <button id="rcAdd5">+5</button>
+      <button id="rcAdd10">+10</button>
+      <button id="rcFinish" title="Guardar sesión ahora">Finalizar sesión</button>
+      <select id="rcCategory" title="Categoría" style="min-width:180px"></select>
+      <select id="rcSessionType" title="Sesión"><option value="privada">Privada</option><option value="publica">Pública</option></select>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>Totales por categoría (horas)</h2>
+      <table id="totals"><thead><tr><th>Categoría</th><th>Horas</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Config</h2>
+      <div class="row"><label>Duración por defecto (min)</label><input type="number" id="cfgDuration" min="1" /></div>
+      <div class="row"><label>Opacidad</label><input type="range" id="cfgOpacity" min="0.6" max="0.95" step="0.01" /><span id="opacityVal"></span></div>
+      <div class="row"><label>Categorías</label><ul id="catList"></ul><input id="newCat" placeholder="Nueva categoría..."/><button id="addCat">Añadir</button></div>
+      <button id="saveCfg">Guardar Configuración</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row"><h2>Sesiones</h2><div class="spacer"></div><button id="importSheets">Sincronizar desde Sheets</button><button id="clearAll">Borrar todas</button><button id="exportCSV">Exportar CSV</button></div><button id="importSheets">Sincronizar desde Sheets</button><button id="clearAll">Borrar todas</button><button id="exportCSV">Exportar CSV</button></div>
+    <table id="sessions">
+      <thead>
+        <tr>
+          <th>Duración (min)</th>
+          <th>Categoría</th>
+          <th>Sesión</th>
+          <th>Fechas</th>
+          <th>Evento/ICS</th>
+          <th>URL</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+<script src="dashboard.js"></script>
+</body>
+</html>
