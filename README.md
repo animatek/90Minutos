@@ -21,9 +21,6 @@ El objetivo es ayudarte a mantener la constancia, medir tu progreso y analizar e
 - `/docs` → Documentación y capturas.  
 - `index.html` → Ejemplo de integración local.  
 
-## 🔧 Instalación y uso
+## Web del Proyecto:
 
-1. Clonar el repositorio:  
-   ```bash
-   git clone https://github.com/animatek/90minutos.git
-   cd 90-minutos
+https://animatek.net/laboratorio90
