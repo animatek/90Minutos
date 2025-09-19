@@ -16,9 +16,6 @@ El objetivo es ayudarte a mantener la constancia, medir tu progreso y analizar e
 
 ## 📂 Estructura del proyecto
 
-- `/widgets` → Código HTML/CSS/JS de los widgets (KPIs, donut, sesiones, etc).  
-- `/data` → Archivos CSV de prueba o ejemplos de estructura de datos.  
-- `/docs` → Documentación y capturas.  
 - `index.html` → Ejemplo de integración local.  
 
 ## Web del Proyecto:
