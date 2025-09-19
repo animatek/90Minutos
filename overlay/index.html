@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Animatek Timer Overlay</title>
+<link rel="stylesheet" href="overlay.css" />
+</head><body>
+<audio id="alarm" src="sounds/alarm.wav" preload="auto"></audio>
+<div id="container" class="card">
+  <div class="row topbar"><div class="title" id="sessionTitle">SESIÓN DE INSTRUMENTO</div></div>
+  <div class="row content">
+    <div class="dialwrap">
+      <svg class="dial" viewBox="0 0 120 120">
+        <circle class="track" cx="60" cy="60" r="54" />
+        <circle class="progress" cx="60" cy="60" r="54" />
+        <circle class="dot" cx="60" cy="6" r="4" />
+      </svg>
+    </div>
+    <div class="clock">
+      <div id="timer" class="timer">90:00</div>
+      <div id="status" class="status">En espera…</div>
+    </div>
+  </div>
+</div>
+<script src="overlay.js"></script>
+</body></html>

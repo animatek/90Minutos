@@ -1,0 +1,23 @@
+{
+  "name": "animatek-timer",
+  "version": "2.5.1",
+  "private": true,
+  "type": "module",
+  "description": "Timer 90min para OBS + Stream Deck + Calendar + Sheets",
+  "scripts": {
+    "dev": "node server/index.js",
+    "plugin:pack": "node scripts/pack-plugin.mjs",
+    "google:auth": "node scripts/open-auth.mjs",
+    "build": "echo \"No hay build: usa 'npm run dev'\""
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "googleapis": "^144.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "archiver": "^7.0.1",
+    "open": "^10.1.0"
+  }
+}

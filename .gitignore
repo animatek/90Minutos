@@ -1,0 +1,32 @@
+# Dependencias
+node_modules/
+
+# Builds / cobertura / caches
+dist/
+build/
+coverage/
+.nyc_output/
+.cache/
+*.tmp
+*.temp
+
+# Entornos
+.env
+*.env.local
+server/.env
+
+# Datos y tokens locales
+server/data/tokens.json
+server/data/sessions.json
+sessions/
+*.ics
+*.csv
+
+# Logs
+logs/
+*.log
+
+# SO / editor
+.DS_Store
+Thumbs.db
+.vscode/settings.json

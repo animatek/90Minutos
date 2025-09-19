@@ -1,0 +1,17 @@
+{
+  "defaultDurationMin": 90,
+  "categories": [
+    "VCV Rack",
+    "Bitwig Beta 2",
+    "Bitwig Beta 3"
+  ],
+  "theme": "auto",
+  "opacity": 0.85,
+  "timezone": "Europe/Madrid",
+  "languages": [
+    "ES",
+    "EN"
+  ],
+  "defaultLanguage": "ES",
+  "defaultSessionType": "privada"
+}

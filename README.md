@@ -1,23 +1,26 @@
-# Proyecto 90 Minutos ⏱️
+# Animatek Timer — v2.5.1
 
-**90 Minutos** es un sistema de productividad creativa diseñado para registrar y visualizar sesiones de trabajo enfocadas de 90 minutos.  
-El objetivo es ayudarte a mantener la constancia, medir tu progreso y analizar en qué áreas inviertes tu tiempo creativo.  
+Cambios:
+- **Abrir base de datos** arreglado: el enlace se arma con `/api/sheet/id` y tu `SHEET_ID` del `.env`.
+- Botón **Sincronizar desde Sheets** (convierte filas A–E en sesiones locales). Útil para traer cambios manuales del Sheet.
 
-## 🚀 Características principales
+## Uso
+```powershell
+npm i
+npm run dev
+```
+Panel: `http://127.0.0.1:5173/dashboard/`
 
-- **Sesiones de 90 minutos** con contador visual y círculo de progreso.  
-- **Registro en base de datos** con duración, categoría, fecha y notas opcionales.  
-- **Dashboard dinámico** con KPIs:
-  - Horas totales por semana (reset automático cada domingo).  
-  - Top-4 de categorías más activas.  
-  - Gráfico donut por categorías con colores dinámicos.  
-- **Soporte de CSV/Google Sheets** para almacenar y sincronizar datos.  
-- **Widgets integrables en WordPress (Divi)** con estilo personalizable.  
+### `.env`
+```
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+BASE_URL=http://127.0.0.1:5173
+SHEET_ID=<tu id de hoja>
+```
 
-## 📂 Estructura del proyecto
+### Importar desde Sheets
+Pulsa **Sincronizar desde Sheets** (requiere OAuth a Sheets). Se reconstruye `server/data/sessions.json` con sesiones sintéticas (fecha = día de la fila a las 12:00 y duración = minutos).
 
-- `index.html` → Ejemplo de integración local.  
-
-## Web del Proyecto:
-
-https://animatek.net/laboratorio90
+### OBS y Stream Deck
+Como en versiones anteriores.

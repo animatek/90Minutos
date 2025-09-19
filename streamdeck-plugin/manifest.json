@@ -1,0 +1,132 @@
+{
+  "Author": "Animatek",
+  "Name": "Animatek Timer",
+  "Description": "Controla el contador 90min (Start/Pause/Resume/Reset, +1/+5/+10, categor\u00eda, finalizar).",
+  "Version": "2.5.1",
+  "SDKVersion": 2,
+  "OS": [
+    {
+      "Platform": "mac",
+      "MinimumVersion": "10.15"
+    },
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "URL": "https://animatek.net",
+  "Icon": "com.animatek.timer.sdPlugin/assets/icon",
+  "Category": "Animatek",
+  "CategoryIcon": "com.animatek.timer.sdPlugin/assets/icon",
+  "Actions": [
+    {
+      "UUID": "com.animatek.timer.start",
+      "Name": "Start",
+      "Tooltip": "Inicia el contador",
+      "Icon": "com.animatek.timer.sdPlugin/assets/icon",
+      "States": [
+        {
+          "Image": "com.animatek.timer.sdPlugin/assets/icon"
+        }
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "UUID": "com.animatek.timer.pause",
+      "Name": "Pause",
+      "Tooltip": "Pausa",
+      "Icon": "com.animatek.timer.sdPlugin/assets/icon",
+      "States": [
+        {
+          "Image": "com.animatek.timer.sdPlugin/assets/icon"
+        }
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "UUID": "com.animatek.timer.resume",
+      "Name": "Resume",
+      "Tooltip": "Reanuda",
+      "Icon": "com.animatek.timer.sdPlugin/assets/icon",
+      "States": [
+        {
+          "Image": "com.animatek.timer.sdPlugin/assets/icon"
+        }
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "UUID": "com.animatek.timer.reset",
+      "Name": "Reset",
+      "Tooltip": "Reinicia",
+      "Icon": "com.animatek.timer.sdPlugin/assets/icon",
+      "States": [
+        {
+          "Image": "com.animatek.timer.sdPlugin/assets/icon"
+        }
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "UUID": "com.animatek.timer.add1",
+      "Name": "+1 min",
+      "Tooltip": "A\u00f1ade 1 min",
+      "Icon": "com.animatek.timer.sdPlugin/assets/icon",
+      "States": [
+        {
+          "Image": "com.animatek.timer.sdPlugin/assets/icon"
+        }
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "UUID": "com.animatek.timer.add5",
+      "Name": "+5 min",
+      "Tooltip": "A\u00f1ade 5 min",
+      "Icon": "com.animatek.timer.sdPlugin/assets/icon",
+      "States": [
+        {
+          "Image": "com.animatek.timer.sdPlugin/assets/icon"
+        }
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "UUID": "com.animatek.timer.add10",
+      "Name": "+10 min",
+      "Tooltip": "A\u00f1ade 10 min",
+      "Icon": "com.animatek.timer.sdPlugin/assets/icon",
+      "States": [
+        {
+          "Image": "com.animatek.timer.sdPlugin/assets/icon"
+        }
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "UUID": "com.animatek.timer.finish",
+      "Name": "Finalizar sesi\u00f3n",
+      "Tooltip": "Completa la sesi\u00f3n ahora",
+      "Icon": "com.animatek.timer.sdPlugin/assets/icon",
+      "States": [
+        {
+          "Image": "com.animatek.timer.sdPlugin/assets/icon"
+        }
+      ],
+      "SupportedInMultiActions": true
+    },
+    {
+      "UUID": "com.animatek.timer.category",
+      "Name": "Elegir categor\u00eda",
+      "Tooltip": "Establece una categor\u00eda",
+      "Icon": "com.animatek.timer.sdPlugin/assets/icon",
+      "States": [
+        {
+          "Image": "com.animatek.timer.sdPlugin/assets/icon"
+        }
+      ],
+      "PropertyInspectorPath": "com.animatek.timer.sdPlugin/propertyinspector.html",
+      "SupportedInMultiActions": true
+    }
+  ]
+}

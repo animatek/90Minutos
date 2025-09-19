@@ -1,0 +1,1 @@
+import open from 'open'; const url=(process.env.BASE_URL||'http://127.0.0.1:5173')+'/api/google/auth'; await open(url); console.log('Abriendo:', url);
