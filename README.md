@@ -1,115 +1,26 @@
-# ⏱️ Timer90 – Animatek
+# Animatek Timer — v2.5.1
 
-A **90-minute session system** with a web dashboard, streaming overlay, and Stream Deck plugin.  
-Designed to measure, visualize, and organize focused work or music creation blocks.
+Cambios:
+- **Abrir base de datos** arreglado: el enlace se arma con `/api/sheet/id` y tu `SHEET_ID` del `.env`.
+- Botón **Sincronizar desde Sheets** (convierte filas A–E en sesiones locales). Útil para traer cambios manuales del Sheet.
 
----
-
-## 🚀 Installation
-
-Clone the repository and enter the folder:
-
-```bash
-git clone https://github.com/animatek/Timer90.git
-cd Timer90
-```
-
-Install dependencies (use the Node.js version specified in `package.json`):
-
-```bash
-npm ci
-```
-
----
-
-## ⚙️ Configuration
-
-Copy the example environment file and fill in your own values:
-
-```bash
-cp server/.env.example server/.env
-```
-
-Minimum variables required:
-
-```ini
-# server/.env
-PORT=3000
-GOOGLE_CLIENT_ID=your_client_id
-GOOGLE_CLIENT_SECRET=your_client_secret
-# add more as needed
-```
-
-> ❗ Never commit your real `.env` file to GitHub. It is already included in `.gitignore`.
-
----
-
-## 🖥️ Usage
-
-### Start the server
-```bash
+## Uso
+```powershell
+npm i
 npm run dev
 ```
+Panel: `http://127.0.0.1:5173/dashboard/`
 
-The app will be available at `http://localhost:3000`.
-
-### Dashboard
-- Served from `/dashboard/`
-- Displays sessions, statistics, and totals
-
-### Overlay
-- Designed for OBS or Streamlabs
-- URL: `http://localhost:3000/overlay`
-
-### Stream Deck Plugin
-- Located in `/streamdeck-plugin/`
-- Package and load it into your Stream Deck
-- Start/stop sessions directly from hardware
-
----
-
-## 📂 Project structure
-
+### `.env`
 ```
-Timer90/
-├── dashboard/           # main web interface
-├── overlay/             # overlay for OBS/streaming
-├── server/              # Node.js server + API
-│   ├── data/            # local configs (tokens, sessions) [IGNORED]
-│   ├── .env.example
-├── streamdeck-plugin/   # official Stream Deck plugin
-├── scripts/             # helper scripts
-├── package.json
-├── package-lock.json
-└── README.md
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+BASE_URL=http://127.0.0.1:5173
+SHEET_ID=<tu id de hoja>
 ```
 
----
+### Importar desde Sheets
+Pulsa **Sincronizar desde Sheets** (requiere OAuth a Sheets). Se reconstruye `server/data/sessions.json` con sesiones sintéticas (fecha = día de la fila a las 12:00 y duración = minutos).
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch:
-   ```bash
-   git checkout -b feature/your-feature
-   ```
-3. Commit your changes:
-   ```bash
-   git commit -m "feat: clear description of change"
-   ```
-4. Push to your fork and open a Pull Request
-
----
-
-## 📜 License
-
-This project is licensed under the **MIT License**.  
-See the [LICENSE](LICENSE) file for details.
-
----
-
-## ✨ Credits
-
-Developed by [Animatek](https://animatek.net)  
-YouTube: [@animatek](https://www.youtube.com/@animatek)  
-Instagram: [@animatek](https://www.instagram.com/animatek/)  
+### OBS y Stream Deck
+Como en versiones anteriores.
