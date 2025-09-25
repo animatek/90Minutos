@@ -36,7 +36,7 @@
     #an90-all .legend li{display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer}
     #an90-all .legend li.active{background:#fff;border:1px solid var(--line);border-radius:8px;padding:4px 6px}
     #an90-all .swatch{width:12px;height:12px;border-radius:3px;border:1px solid var(--line)}
-    #an90-all .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px}
+    #an90-all .grid-4{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:12px}
     #an90-all .cat{padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--card);cursor:pointer}
     #an90-all .cat.active{outline:2px solid var(--accent2)}
     #an90-all .cat .name{font-size:13px;color:var(--muted);margin-bottom:4px}
@@ -96,8 +96,8 @@
   
         <section class="card donut-card">
           <div class="topbar">
-            <div id="scopeLabel" style="font-size:12px;color:var(--muted)">Top-4 por: Mes actual</div>
-            <div class="scope" aria-label="Cambiar contexto de Top-4">
+            <div id="scopeLabel" style="font-size:12px;color:var(--muted)">Distribución por: Mes actual</div>
+            <div class="scope" aria-label="Cambiar contexto de distribución">
               <button type="button" data-scope="month" class="active">Mes</button>
               <button type="button" data-scope="hist">Histórico</button>
             </div>
@@ -319,28 +319,27 @@
   
       function calcParts(){
         const base=(topScope==='month') ? rows.filter(r=>r.y===NOW_Y && r.m===NOW_M) : rows;
-        const ordered=base.slice().sort((a,b)=>b.fechaISO.localeCompare(a.fechaISO));
-        const last4=[], seen=new Set();
-        for(const r of ordered){
-          const name=(r.categoria||'').trim(); const key=name.toLowerCase();
-          if(!key || seen.has(key)) continue;
-          seen.add(key); last4.push(name); if(last4.length===4) break;
+        const totals=new Map();
+        for(const r of base){
+          let name=(r.categoria||'').trim();
+          if(!name) name='Sin categoría';
+          const key=name.toLowerCase();
+          if(!totals.has(key)) totals.set(key,{name,hours:0});
+          totals.get(key).hours += (r.duracion||0)/60;
         }
-        if(!last4.length) last4.push('Sin categoría');
-        const hoursBy=Object.fromEntries(last4.map(n=>[n,0]));
-        base.forEach(r=>{
-          const k=(r.categoria||'').trim().toLowerCase();
-          const hit=last4.find(n=>n.toLowerCase()===k);
-          if(hit) hoursBy[hit]+=r.duracion/60;
+        if(!totals.size) totals.set('__empty__',{name:'Sin categoría',hours:0});
+        const parts=[...totals.values()].sort((a,b)=>{
+          if(b.hours!==a.hours) return b.hours-a.hours;
+          return a.name.localeCompare(b.name);
         });
-        const palette=paletteFor(last4);
-        return last4.map(name=>({name, hours: hoursBy[name]||0, color: palette[name]}));
+        const palette=paletteFor(parts.map(p=>p.name));
+        return parts.map(p=>({name:p.name, hours:p.hours, color: palette[p.name]||'#e6ebf5'}));
       }
-  
+
       function renderTop(){
         const parts=calcParts();
         donutEl.style.background = `conic-gradient(${conicStops(parts)})`;
-        scopeLbl.textContent = `Top-4 por: ${topScope==='month'?'Mes actual':'Histórico'}`;
+        scopeLbl.textContent = `Distribución por: ${topScope==='month'?'Mes actual':'Histórico'}`;
         legendEl.innerHTML = parts.map(p=>`<li data-cat="${encodeURIComponent(p.name)}"><span class="swatch" style="background:${p.color}"></span><b>${tcase(p.name)}</b> — ${fmtNum(p.hours)} h</li>`).join('');
         const maxH=Math.max(...parts.map(p=>p.hours),0);
         catsEl.innerHTML = parts.map(p=>{
