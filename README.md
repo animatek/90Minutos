@@ -1,4 +1,4 @@
-# ⏱️ Timer90 – Animatek
+# ⏱️ Timer90 – Animatek (v1.2)
 
 A **90-minute session system** with a web dashboard, streaming overlay, and Stream Deck plugin.  
 Designed to measure, visualize, and organize focused work or music creation blocks.
