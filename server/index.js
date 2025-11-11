@@ -15,6 +15,7 @@ const __dirname = path.dirname(__filename);
 const defaultConfig = {
   defaultDurationMin: 90,
   categories: ["Octatrack","Digitakt","Oxi One","Bitwig"],
+  categoryColors: {},
   theme: "auto",
   opacity: 0.85,
   timezone: "Europe/Madrid",
@@ -40,6 +41,7 @@ let category = cfg.categories?.[0] || 'General';
 let sessionName = category;
 let language = cfg.defaultLanguage || 'ES';
 let sessionType = cfg.defaultSessionType || 'privada';
+let sessionUrl = '';
 
 let tickTimer = null;
 
@@ -49,7 +51,7 @@ const clients = new Set();
 function broadcast(obj) { const raw = JSON.stringify(obj); for (const c of clients) { try { c.send(raw); } catch {} } }
 function pushState(){
   broadcast({ type: 'state', payload: {
-    state, durationSec, remainingSec, category, sessionName, language, sessionType,
+    state, durationSec, remainingSec, category, sessionName, language, sessionType, sessionUrl,
     startedAtISO: startedAt ? startedAt.toISOString() : null
   }});
 }
@@ -80,9 +82,10 @@ function resumeTimer(){
 function resetTimer(){ state='idle'; if (tickTimer) { clearInterval(tickTimer); tickTimer=null; } remainingSec = durationSec; startedAt=null; pushState(); }
 function addSeconds(s){ const add = Number(s)||0; remainingSec = Math.max(0, remainingSec + add); pushState(); }
 function setCategoryValue(cat){ if (!cat) return; category=String(cat); sessionName=category; pushState(); }
-function setSessionNameValue(name){ if (!name) return; sessionName=String(name); pushState(); }
+function setSessionNameValue(name){ if (typeof name === 'undefined' || name === null) return; sessionName=String(name); pushState(); }
 function setLanguageValue(lang){ if (!lang) return; language=String(lang); pushState(); }
 function setSessionTypeValue(t){ if (!t) return; sessionType=String(t); pushState(); }
+function setSessionUrlValue(url){ sessionUrl = (url ?? '').toString(); pushState(); }
 function setDurationSeconds(sec){ const s = Math.max(1, Number(sec)||5400); durationSec = s; if (state==='idle') remainingSec=durationSec; pushState(); }
 
 async function appendCSV(session){
@@ -119,7 +122,7 @@ async function completeSession(){
   const session = { id: Date.now(),
     startISO: start.toISOString(), endISO: end.toISOString(),
     durationMin, durationSec: totalSec,
-    category, language, sessionType, sessionName
+    category, language, sessionType, sessionName, url: sessionUrl
   };
   try {
     if (await hasGoogleAuth()) { const id = await createCalendarEvent(session); session.calendarEventId = id; }
@@ -130,7 +133,7 @@ async function completeSession(){
 
   try { await appendToSheet(session); } catch (e) { await appendCSV(session); }
 
-  state='idle'; remainingSec = durationSec; startedAt = null; pushState();
+  state='idle'; remainingSec = durationSec; startedAt = null; sessionUrl=''; pushState();
   broadcast({ type: 'session:complete', payload: session });
 }
 
@@ -202,7 +205,7 @@ app.get('/api/stats', async (req,res)=>{
   const totalHours = Object.fromEntries(Object.entries(byCatMin).map(([k,v])=>[k, +(v/60).toFixed(2)]));
   res.json({ totalsMin: byCatMin, totalsHours: totalHours, count: sessions.length });
 });
-app.get('/api/state', (req,res)=>{ res.json({ state, durationSec, remainingSec, category, sessionName, language, sessionType, startedAtISO: startedAt? startedAt.toISOString(): null }); });
+app.get('/api/state', (req,res)=>{ res.json({ state, durationSec, remainingSec, category, sessionName, language, sessionType, sessionUrl, startedAtISO: startedAt? startedAt.toISOString(): null }); });
 
 // Google & Sheets
 app.get('/api/google/auth', beginAuth);
@@ -265,6 +268,7 @@ wss.on('connection', (ws)=>{
           case 'setDurationSec': setDurationSeconds(p); break;
           case 'setLanguage': setLanguageValue(p); break;
           case 'setSessionType': setSessionTypeValue(p); break;
+          case 'setSessionUrl': setSessionUrlValue(p); break;
         }
       }
     }catch{}

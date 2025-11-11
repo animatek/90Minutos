@@ -6,18 +6,15 @@
 </head><body>
 <audio id="alarm" src="sounds/alarm.wav" preload="auto"></audio>
 <div id="container" class="card">
-  <div class="row topbar"><div class="title" id="sessionTitle">SESIÓN DE INSTRUMENTO</div></div>
-  <div class="row content">
+  <div class="overlay-grid">
+    <div class="title" id="sessionTitle">SESIÓN DE INSTRUMENTO</div>
+    <div id="timer" class="timer">90:00</div>
     <div class="dialwrap">
       <svg class="dial" viewBox="0 0 120 120">
         <circle class="track" cx="60" cy="60" r="54" />
         <circle class="progress" cx="60" cy="60" r="54" />
         <circle class="dot" cx="60" cy="6" r="4" />
       </svg>
-    </div>
-    <div class="clock">
-      <div id="timer" class="timer">90:00</div>
-      <div id="status" class="status">En espera…</div>
     </div>
   </div>
 </div>

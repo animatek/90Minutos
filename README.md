@@ -61,6 +61,12 @@ The app will be available at `http://localhost:3000`.
 - Designed for OBS or Streamlabs
 - URL: `http://localhost:3000/overlay`
 
+### 90’ Widget (standalone)
+- Open `90Proyect.html` directly in a browser to preview the dashboard with sample data.
+- To feed your own spreadsheet, publish it as CSV and append `?csv=https://tu-hoja.../output=csv` to the file URL (the file never stores that URL).
+- Alternatively, define `window.ANIMATEK90_CSV_URL = 'https://tu-hoja...';` before the script tag to keep the secret URL out of git.
+- Keep any variant that hardcodes private sheet URLs outside the repository or list it in `.gitignore`.
+
 ### Stream Deck Plugin
 - Located in `/streamdeck-plugin/`
 - Package and load it into your Stream Deck

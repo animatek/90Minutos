@@ -43,6 +43,7 @@
     #an90-all .cat .hours{font-size:22px;font-weight:700;margin-bottom:8px}
     #an90-all .bar{height:8px;background:linear-gradient(90deg,var(--c) var(--w),#e9edf6 var(--w));border-radius:6px;border:1px solid var(--line)}
     #an90-all .sessions{padding:16px;margin-top:12px}
+    #an90-all .demo-banner{display:none;align-items:center;gap:8px;margin:0 0 12px;padding:10px 14px;border-radius:12px;border:1px dashed var(--accent2);background:rgba(36,185,121,.08);font-size:13px;color:#056847}
     #an90-all .sessions-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px}
     #an90-all .sessions h3{margin:0;font-size:14px;color:#3a4354}
     #an90-all .pill{background:#f3f5fb;border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:12px;cursor:pointer}
@@ -77,7 +78,11 @@
         <button class="tabg active" data-pane="dashboard">Dashboard</button>
         <button class="tabg" data-pane="agg">Meses / Años / Total</button>
       </div>
-  
+      <div class="demo-banner" id="demoBanner">
+        <strong>Demo</strong>
+        <span>Usa datos de muestra. Pasa `?csv=URL_PUBLICA` o define `window.ANIMATEK90_CSV_URL` para usar tu hoja.</span>
+      </div>
+
       <!-- PANE: DASHBOARD -->
       <div id="pane-dashboard">
         <section class="kpi-grid">
@@ -169,15 +174,27 @@
             </div>
           </div>
   
-          <div class="muted" style="margin-top:8px">Fuente: Google Sheets (CSV publicado).</div>
+          <div class="muted" style="margin-top:8px">Fuente: CSV público (añade ?csv=tudocumento o define window.ANIMATEK90_CSV_URL).</div>
         </div>
       </div>
     </div>
   
     <script>
     (()=>{ // IIFE único (un solo fetch y datos compartidos)
-      const RAW_CSV = 'URL';
-      const CSV_URL = "https://r.jina.ai/http://" + RAW_CSV.replace(/^https?:\/\//,'');
+      const params = new URLSearchParams(location.search);
+      const queryCSV = params.get('csv') || '';
+      const RAW_CSV = (window.ANIMATEK90_CSV_URL || queryCSV || '').trim();
+      const CSV_URL = RAW_CSV ? "https://r.jina.ai/http://" + RAW_CSV.replace(/^https?:\/\//,'') : null;
+      const SAMPLE_CSV = `Categoria,Duracion,Fecha,Sesion,URL
+Bitwig Production,120,2024-04-01,Sesión 241,https://youtu.be/demo-bitwig
+Digitakt Sketching,90,2024-04-03,Sesión 242,https://youtu.be/demo-digitakt
+VCV Rack Patch,75,2024-04-05,Sesión 243,
+Oxi One Ideas,60,2024-04-06,Sesión 244,https://youtu.be/demo-oxi
+Bitwig Production,95,2024-05-02,Sesión 245,
+Digitakt Sketching,110,2024-05-05,Sesión 246,https://youtu.be/demo-digitakt-2
+Field Recording,80,2024-05-08,Sesión 247,
+VCV Rack Patch,100,2024-05-10,Sesión 248,https://youtu.be/demo-vcv`;
+      let usingSample = !CSV_URL;
       const WEEK_GOAL_HOURS = 15;
   
       const NOW = new Date();
@@ -297,6 +314,7 @@
       const tcase = s => (s||'').replace(/\w\S*/g,t=>t[0].toUpperCase()+t.slice(1));
   
       /* ---------- Estado UI ---------- */
+      const SAMPLE_ROWS = mapRows(parseCSV(SAMPLE_CSV));
       let rows=[];               // dataset completo
       let topScope='month';      // 'month' | 'hist'
       let showAll=false;         // tabla sesiones
@@ -316,6 +334,7 @@
       const weekValEl = document.getElementById('kpi-week-hours');
       const weekFoot  = document.getElementById('kpi-week-foot');
       const weekBar   = document.getElementById('kpi-week-bar');
+      const demoBanner = document.getElementById('demoBanner');
   
       function calcParts(){
         const base=(topScope==='month') ? rows.filter(r=>r.y===NOW_Y && r.m===NOW_M) : rows;
@@ -493,18 +512,37 @@
       selYear.addEventListener('change', ()=>{ showPrev=false; fillMonths(); });
       btnPrev.addEventListener('click', ()=>{ showPrev=!showPrev; fillMonths(); });
   
-      /* ---------- Boot ---------- */
-      async function getCSV(){ const res=await fetch(CSV_URL,{cache:'no-store'}); if(!res.ok) throw new Error('HTTP '+res.status); return res.text(); }
+      /* ---------- Datos ---------- */
+      async function loadData(){
+        if(CSV_URL){
+          try{
+            const res=await fetch(CSV_URL,{cache:'no-store'});
+            if(!res.ok) throw new Error('HTTP '+res.status);
+            const text=await res.text();
+            usingSample=false;
+            return mapRows(parseCSV(text));
+          }catch(err){
+            console.warn('[90m] No se pudo cargar el CSV remoto, usando datos de ejemplo.', err);
+          }
+        }
+        usingSample=true;
+        return SAMPLE_ROWS.map(r=>({...r}));
+      }
   
       async function main(){
-        const csv = await getCSV();
-        rows = mapRows(parseCSV(csv));
+        rows = await loadData();
+        rows.sort((a,b)=>a.fechaISO.localeCompare(b.fechaISO));
         // totales dashboard
         const totalMin = rows.reduce((a,b)=>a+(b.duracion||0),0);
         const totalH   = totalMin/60;
         document.getElementById('kpi-total-hours').textContent = fmtNum(totalH);
         document.getElementById('donut-total').textContent     = fmtNum(totalH);
-  
+        if(usingSample && demoBanner){
+          demoBanner.style.display='flex';
+        }else if(demoBanner){
+          demoBanner.style.display='none';
+        }
+ 
         if(!rows.length){
           document.getElementById('sessions-label').textContent = 'No hay datos en la hoja o las fechas no se pudieron leer';
         }

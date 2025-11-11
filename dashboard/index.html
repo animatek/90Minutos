@@ -10,44 +10,94 @@
   <header>
     <h1>Animatek Timer — Panel</h1>
     <nav>
-      <a href="/overlay/index.html" target="_blank">Abrir Overlay</a>
-      <a id="openSheet" href="#" target="_blank">Abrir base de datos</a>
+      <a href="/overlay/index.html" target="_blank">Overlay</a>
+      <a href="https://animatek.net/laboratorio90/" target="_blank" rel="noopener">Laboratorio 90</a>
+      <a id="openSheet" href="#" target="_blank">Base de datos</a>
       <button id="btnAuth">Conectar Google</button>
     </nav>
   </header>
 
-  <section class="card">
-    <h2>Control remoto</h2>
-    <div class="row">
-      <button id="rcStart">Start</button>
-      <button id="rcPause">Pause</button>
-      <button id="rcResume">Resume</button>
-      <button id="rcReset">Reset</button>
-      <button id="rcAdd1">+1</button>
-      <button id="rcAdd5">+5</button>
-      <button id="rcAdd10">+10</button>
-      <button id="rcFinish" title="Guardar sesión ahora">Finalizar sesión</button>
-      <select id="rcCategory" title="Categoría" style="min-width:180px"></select>
-      <select id="rcSessionType" title="Sesión"><option value="privada">Privada</option><option value="publica">Pública</option></select>
+  <section class="control-grid">
+    <div class="card control-card">
+      <h2>Control remoto</h2>
+      <div class="row">
+        <button id="rcStart">Start</button>
+        <button id="rcPause">Pause</button>
+        <button id="rcResume">Resume</button>
+        <button id="rcReset">Reset</button>
+        <button id="rcFinish" title="Guardar sesión ahora">Finalizar sesión</button>
+        <select id="rcCategory" title="Categoría" style="min-width:180px"></select>
+        <select id="rcSessionType" title="Sesión"><option value="privada">Privada</option><option value="publica">Pública</option></select>
+        <input id="rcUrl" class="control-input" type="url" placeholder="URL de la sesión" />
+      </div>
+    </div>
+    <div class="card leader-card" id="leaderCard">
+      <h2>Categoría líder</h2>
+      <p class="leader-label">La categoría con más horas acumuladas</p>
+      <div class="leader-name" id="leaderCatName">—</div>
+      <div class="leader-hours" id="leaderCatHours">0 h</div>
     </div>
   </section>
 
   <section class="grid">
     <div class="card">
       <h2>Totales por categoría (horas)</h2>
-      <table id="totals"><thead><tr><th>Categoría</th><th>Horas</th></tr></thead><tbody></tbody></table>
+      <table id="totals"><thead><tr><th>Categoría</th><th id="totalsHoursHeader" class="sortable">Horas</th></tr></thead><tbody></tbody></table>
     </div>
     <div class="card">
       <h2>Config</h2>
-      <div class="row"><label>Duración por defecto (min)</label><input type="number" id="cfgDuration" min="1" /></div>
+      <div class="row duration-row">
+        <label>Duración</label>
+        <input type="range" id="cfgDuration" class="duration-slider" min="90" max="360" step="5" value="90" />
+        <span id="durationVal">90 min</span>
+      </div>
       <div class="row"><label>Opacidad</label><input type="range" id="cfgOpacity" min="0.6" max="0.95" step="0.01" /><span id="opacityVal"></span></div>
-      <div class="row"><label>Categorías</label><ul id="catList"></ul><input id="newCat" placeholder="Nueva categoría..."/><button id="addCat">Añadir</button></div>
+      <div class="row categories-row">
+        <label>Categorías</label>
+        <div class="cat-controls">
+          <details id="catDropdown" class="cat-dropdown">
+            <summary>Ver categorías</summary>
+            <ul id="catList"></ul>
+          </details>
+          <div class="new-cat">
+            <input id="newCat" class="control-input cat-input" placeholder="Nueva categoría..."/>
+            <button id="addCat">Añadir</button>
+          </div>
+        </div>
+      </div>
       <button id="saveCfg">Guardar Configuración</button>
     </div>
   </section>
 
   <section class="card">
-    <div class="row"><h2>Sesiones</h2><div class="spacer"></div><button id="importSheets">Sincronizar desde Sheets</button><button id="clearAll">Borrar todas</button><button id="exportCSV">Exportar CSV</button></div><button id="importSheets">Sincronizar desde Sheets</button><button id="clearAll">Borrar todas</button><button id="exportCSV">Exportar CSV</button></div>
+    <div class="row"><h2>Sesiones</h2><div class="spacer"></div><button id="importSheets">Sincronizar desde Sheets</button><button id="clearAll">Borrar todas</button><button id="exportCSV">Exportar CSV</button></div>
+    <div class="row session-filters">
+      <label for="filterMonth">Mes</label>
+      <select id="filterMonth">
+        <option value="all">Todos</option>
+      </select>
+      <label for="filterYear">Año</label>
+      <select id="filterYear">
+        <option value="all">Todos</option>
+      </select>
+      <label for="filterType">Sesión</label>
+      <select id="filterType">
+        <option value="all">Todas</option>
+        <option value="privada">Privadas</option>
+        <option value="publica">Públicas</option>
+      </select>
+      <label for="filterCategory">Categoría</label>
+      <select id="filterCategory">
+        <option value="all">Todas</option>
+      </select>
+      <label for="filterUrl">URL</label>
+      <select id="filterUrl">
+        <option value="all">Todas</option>
+        <option value="with">Con URL</option>
+        <option value="without">Sin URL</option>
+      </select>
+      <button id="clearFilters">Limpiar filtros</button>
+    </div>
     <table id="sessions">
       <thead>
         <tr>
