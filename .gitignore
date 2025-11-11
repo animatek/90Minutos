@@ -21,6 +21,7 @@ server/data/sessions.json
 sessions/
 *.ics
 *.csv
+Snippet/
 
 # Logs
 logs/
