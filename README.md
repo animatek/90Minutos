@@ -74,45 +74,6 @@ The app will be available at `http://localhost:3000`.
 
 ---
 
-## 📂 Project structure
-
-```
-Timer90/
-├── dashboard/           # main web interface
-├── overlay/             # overlay for OBS/streaming
-├── server/              # Node.js server + API
-│   ├── data/            # local configs (tokens, sessions) [IGNORED]
-│   ├── .env.example
-├── streamdeck-plugin/   # official Stream Deck plugin
-├── scripts/             # helper scripts
-├── package.json
-├── package-lock.json
-└── README.md
-```
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch:
-   ```bash
-   git checkout -b feature/your-feature
-   ```
-3. Commit your changes:
-   ```bash
-   git commit -m "feat: clear description of change"
-   ```
-4. Push to your fork and open a Pull Request
-
----
-
-## 📜 License
-
-This project is licensed under the **MIT License**.  
-See the [LICENSE](LICENSE) file for details.
-
----
 
 ## 🔒 Notas de seguridad / GitHub
 
