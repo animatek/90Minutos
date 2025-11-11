@@ -65,7 +65,7 @@ The app will be available at `http://localhost:3000`.
 - Open `90Proyect.html` directly in a browser to preview the dashboard with sample data.
 - To feed your own spreadsheet, publish it as CSV and append `?csv=https://tu-hoja.../output=csv` to the file URL (the file never stores that URL).
 - Alternatively, define `window.ANIMATEK90_CSV_URL = 'https://tu-hoja...';` before the script tag to keep the secret URL out of git.
-- Keep any variant that hardcodes private sheet URLs outside the repository or list it in `.gitignore`.
+- Keep any variant that hardcodes private sheet URLs outside the repository or list it in `.gitignore` (e.g. store it under `Snippet/`, which is ignored by default).
 
 ### Stream Deck Plugin
 - Located in `/streamdeck-plugin/`
@@ -111,6 +111,14 @@ Timer90/
 
 This project is licensed under the **MIT License**.  
 See the [LICENSE](LICENSE) file for details.
+
+---
+
+## 🔒 Notas de seguridad / GitHub
+
+- No se suben `.env`, `server/data/*.json` ni la carpeta `Snippet/`; verifica con `git status` antes de `git push`.
+- Si necesitas compartir un widget con datos reales, duplica `90Proyect.html` dentro de `Snippet/` y añade ahí la URL privada.
+- Para pruebas locales, usa `90Proyect.html` (demo) y pasa `?csv=` con una URL pública temporal.
 
 ---
 
