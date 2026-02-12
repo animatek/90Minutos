@@ -1,119 +1,207 @@
 <!doctype html>
 <html lang="es">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Animatek Timer — Panel</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link rel="stylesheet" href="dashboard.css" />
 </head>
+
 <body>
   <header>
     <h1>Animatek Timer — Panel</h1>
     <nav>
       <a href="/overlay/index.html" target="_blank">Overlay</a>
-      <a href="https://animatek.net/laboratorio90/" target="_blank" rel="noopener">Laboratorio 90</a>
+      <a href="https://animatek.net/90-minutos/" target="_blank" rel="noopener">Laboratorio 90</a>
       <a id="openSheet" href="#" target="_blank">Base de datos</a>
+      <button id="themeToggle" title="Cambiar tema">🌙</button>
       <button id="btnAuth">Conectar Google</button>
     </nav>
   </header>
 
+  <section class="gamification-bar">
+    <div class="xp-container">
+      <div class="level-badge">Nivel <span id="userLevel">1</span></div>
+      <div class="xp-bar-wrapper">
+        <div class="xp-bar-fill" id="xpBarFill" style="width: 0%"></div>
+        <span class="xp-text"><span id="currentXP">0</span> / <span id="nextLevelXP">100</span> XP</span>
+      </div>
+    </div>
+    <div class="streak-container">
+      <span class="streak-icon">🔥</span>
+      <span class="streak-count"><span id="streakDays">0</span> días racha</span>
+    </div>
+  </section>
+
   <section class="control-grid">
     <div class="card control-card">
       <h2>Control remoto</h2>
-      <div class="row">
+      <div class="rc-timer" aria-live="polite">
+        <div class="rc-timer-value" id="rcTimerValue">00:00</div>
+        <div class="rc-timer-meta">
+          <span id="rcTimerState">En espera — Sin categoría</span>
+          <span id="rcTimerElapsed">Transcurrido 00:00 / 00:00</span>
+        </div>
+        <div class="rc-progress-track">
+          <div class="rc-progress-bar" id="rcTimerProgress"></div>
+        </div>
+      </div>
+      <div class="row rc-actions">
         <button id="rcStart">Start</button>
         <button id="rcPause">Pause</button>
         <button id="rcResume">Resume</button>
         <button id="rcReset">Reset</button>
         <button id="rcFinish" title="Guardar sesión ahora">Finalizar sesión</button>
         <select id="rcCategory" title="Categoría" style="min-width:180px"></select>
-        <select id="rcSessionType" title="Sesión"><option value="privada">Privada</option><option value="publica">Pública</option></select>
-        <input id="rcUrl" class="control-input" type="url" placeholder="URL de la sesión" />
-      </div>
-    </div>
-    <div class="card leader-card" id="leaderCard">
-      <h2>Categoría líder</h2>
-      <p class="leader-label">La categoría con más horas acumuladas</p>
-      <div class="leader-name" id="leaderCatName">—</div>
-      <div class="leader-hours" id="leaderCatHours">0 h</div>
-    </div>
-  </section>
-
-  <section class="grid">
-    <div class="card">
-      <h2>Totales por categoría (horas)</h2>
-      <table id="totals"><thead><tr><th>Categoría</th><th id="totalsHoursHeader" class="sortable">Horas</th></tr></thead><tbody></tbody></table>
-    </div>
-    <div class="card">
-      <h2>Config</h2>
-      <div class="row duration-row">
-        <label>Duración</label>
-        <input type="range" id="cfgDuration" class="duration-slider" min="90" max="360" step="5" value="90" />
-        <span id="durationVal">90 min</span>
-      </div>
-      <div class="row"><label>Opacidad</label><input type="range" id="cfgOpacity" min="0.6" max="0.95" step="0.01" /><span id="opacityVal"></span></div>
-      <div class="row categories-row">
-        <label>Categorías</label>
-        <div class="cat-controls">
-          <details id="catDropdown" class="cat-dropdown">
-            <summary>Ver categorías</summary>
-            <ul id="catList"></ul>
-          </details>
-          <div class="new-cat">
-            <input id="newCat" class="control-input cat-input" placeholder="Nueva categoría..."/>
-            <button id="addCat">Añadir</button>
+        <select id="rcSessionType" title="Sesión">
+          <option value="privada">Privada</option>
+          <option value="publica">Pública</option>
+        </select>
+        <div class="rc-inline-group">
+          <input id="rcUrl" class="control-input" type="url" placeholder="URL de la sesión" />
+          <div class="rc-compact-controls">
+            <div class="rc-compact-group">
+              <span class="rc-compact-label">Duración</span>
+              <div class="compact-slider">
+                <input type="range" id="cfgDuration" class="styled-slider compact-slider-input" min="5" max="240" step="5"
+                  value="90" />
+                <span id="durationVal" class="badge-value compact-badge">90 min</span>
+              </div>
+            </div>
+            <div class="rc-compact-group">
+              <span class="rc-compact-label">Opacidad</span>
+              <div class="compact-slider">
+                <input type="range" id="cfgOpacity" class="styled-slider compact-slider-input" min="0.1" max="1" step="0.05" />
+                <span id="opacityVal" class="badge-value compact-badge">0.85</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
-      <button id="saveCfg">Guardar Configuración</button>
     </div>
   </section>
 
-  <section class="card">
-    <div class="row"><h2>Sesiones</h2><div class="spacer"></div><button id="importSheets">Sincronizar desde Sheets</button><button id="clearAll">Borrar todas</button><button id="exportCSV">Exportar CSV</button></div>
-    <div class="row session-filters">
-      <label for="filterMonth">Mes</label>
-      <select id="filterMonth">
-        <option value="all">Todos</option>
-      </select>
-      <label for="filterYear">Año</label>
-      <select id="filterYear">
-        <option value="all">Todos</option>
-      </select>
-      <label for="filterType">Sesión</label>
-      <select id="filterType">
-        <option value="all">Todas</option>
-        <option value="privada">Privadas</option>
-        <option value="publica">Públicas</option>
-      </select>
-      <label for="filterCategory">Categoría</label>
-      <select id="filterCategory">
-        <option value="all">Todas</option>
-      </select>
-      <label for="filterUrl">URL</label>
-      <select id="filterUrl">
-        <option value="all">Todas</option>
-        <option value="with">Con URL</option>
-        <option value="without">Sin URL</option>
-      </select>
-      <button id="clearFilters">Limpiar filtros</button>
+  <section class="card lights-card">
+    <h2>Luces</h2>
+    <div class="lights-grid">
+      <div class="lights-group">
+        <span class="lights-group-label">Todas</span>
+        <div class="lights-buttons">
+          <button id="lightsAllOn" class="btn-light btn-light-on">Encender</button>
+          <button id="lightsAllOff" class="btn-light btn-light-off">Apagar</button>
+        </div>
+      </div>
+      <div class="lights-group">
+        <span class="lights-group-label">Estudio</span>
+        <div class="lights-buttons">
+          <button id="lightsEstudioOn" class="btn-light btn-light-on">On</button>
+          <button id="lightsEstudioOff" class="btn-light btn-light-off">Off</button>
+        </div>
+      </div>
+      <div class="lights-group">
+        <span class="lights-group-label">Salon</span>
+        <div class="lights-buttons">
+          <button id="lightsSalonOn" class="btn-light btn-light-on">On</button>
+          <button id="lightsSalonOff" class="btn-light btn-light-off">Off</button>
+        </div>
+      </div>
+      <div class="lights-presets" id="lightsPresets"></div>
     </div>
-    <table id="sessions">
-      <thead>
-        <tr>
-          <th>Duración (min)</th>
-          <th>Categoría</th>
-          <th>Sesión</th>
-          <th>Fechas</th>
-          <th>Evento/ICS</th>
-          <th>URL</th>
-          <th>Acciones</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
   </section>
 
-<script src="dashboard.js"></script>
+  <section class="card stats-card">
+    <div class="charts-container">
+      <div class="chart-wrapper">
+        <h3>Distribución (Horas)</h3>
+        <canvas id="chartDonut"></canvas>
+      </div>
+      <div class="chart-wrapper">
+        <h3>Últimos 7 Días</h3>
+        <canvas id="chartBar"></canvas>
+      </div>
+      <div class="panel-card config-card stats-config">
+        <div class="config-body">
+          <div class="config-section">
+            <div class="add-category-bar">
+              <input id="newCat" class="modern-input compact-input" placeholder="Categoría" />
+              <button id="addCat" class="btn-secondary">Añadir</button>
+              <button id="saveCfg" class="btn-primary">Save</button>
+            </div>
+            <div id="catList" class="categories-grid"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card sessions-card">
+    <div class="sessions-header">
+      <h2>Historial de Sesiones</h2>
+      <div class="sessions-actions">
+        <button id="importSheets" class="btn-icon" title="Sincronizar desde Sheets">🔄 Sync</button>
+        <button id="exportCSV" class="btn-icon" title="Exportar CSV">⬇ CSV</button>
+        <button id="clearAll" class="btn-danger-text" title="Borrar todas">🗑 Borrar todo</button>
+      </div>
+    </div>
+
+    <div class="filters-container">
+      <div class="filter-group">
+        <span class="filter-icon">📅</span>
+        <select id="filterMonth" class="filter-select">
+          <option value="all">Mes: Todos</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-icon">🗓</span>
+        <select id="filterYear" class="filter-select">
+          <option value="all">Año: Todos</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-icon">🏷</span>
+        <select id="filterCategory" class="filter-select">
+          <option value="all">Cat: Todas</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-icon">🔒</span>
+        <select id="filterType" class="filter-select">
+          <option value="all">Tipo: Todas</option>
+          <option value="privada">Privadas</option>
+          <option value="publica">Públicas</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-icon">🔗</span>
+        <select id="filterUrl" class="filter-select">
+          <option value="all">URL: Todas</option>
+          <option value="with">Con URL</option>
+          <option value="without">Sin URL</option>
+        </select>
+      </div>
+      <button id="clearFilters" class="btn-text">Limpiar</button>
+    </div>
+
+    <div class="table-responsive">
+      <table id="sessions" class="modern-table">
+        <thead>
+          <tr>
+            <th>Duración</th>
+            <th>Categoría</th>
+            <th>Tipo</th>
+            <th>Fecha</th>
+            <th>URL</th>
+            <th style="text-align:right">Acciones</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <script src="dashboard.js"></script>
 </body>
+
 </html>

@@ -157,11 +157,14 @@ export async function appendToSheet(session){
     session.url || ''
   ];
 
-  await sheets.spreadsheets.values.append({
+  const resp = await sheets.spreadsheets.values.append({
     spreadsheetId: sheetId,
     range: 'A:F',
     valueInputOption: 'RAW',
     requestBody: { values: [row] }
   });
-  return true;
+  // updatedRange example: "Sheet1!A42:F42" — extract the row number
+  const updatedRange = resp.data?.updates?.updatedRange || '';
+  const rowMatch = updatedRange.match(/(\d+)(?::.*\d+)?$/);
+  return rowMatch ? parseInt(rowMatch[1], 10) : true;
 }

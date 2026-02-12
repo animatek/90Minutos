@@ -3,14 +3,33 @@ import { WebSocketServer } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { promises as fs } from 'fs';
+import { exec } from 'child_process';
 import dotenv from 'dotenv';
 import { readJSON, writeJSON, paths } from './storage.js';
 import { beginAuth, handleCallback, createCalendarEvent, generateICS, hasGoogleAuth, appendToSheet, listSheetRows } from './google.js';
+import { startTelegramBot, sendStatus } from './telegram.js';
+import { DEVICES, PRESETS, turnOn, turnOff, allOn, allOff, applyPreset } from './govee.js';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const rootDir = path.join(__dirname, '..');
+const pidFile = path.join(rootDir, '.server.pid');
+
+// Write PID file for stop script
+await fs.writeFile(pidFile, String(process.pid), 'utf-8');
+
+// Graceful shutdown
+function shutdown(signal) {
+  console.log(`\n[90Minutos] ${signal} recibido — apagando servidor…`);
+  if (tickTimer) clearInterval(tickTimer);
+  wss.close();
+  fs.unlink(pidFile).catch(() => {});
+  process.exit(0);
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 const defaultConfig = {
   defaultDurationMin: 90,
@@ -56,9 +75,15 @@ function pushState(){
   }});
 }
 
+const iconPath = path.join(rootDir, 'icon', '90.png');
+function notify(title, body) {
+  exec(`notify-send -i "${iconPath}" "${title}" "${body}"`, () => {});
+}
+
 function startTimer(){
   if (state === 'running') return;
-  if (state === 'idle') { remainingSec = durationSec; startedAt = now(); }
+  const fresh = state === 'idle';
+  if (fresh) { remainingSec = durationSec; startedAt = now(); }
   state = 'running';
   if (tickTimer) clearInterval(tickTimer);
   tickTimer = setInterval(()=>{
@@ -67,6 +92,10 @@ function startTimer(){
     pushState();
   }, 1000);
   pushState();
+  if (fresh) {
+    const min = Math.round(durationSec / 60);
+    notify('90 Minutos — Sesión iniciada', `${category} · ${min} min`);
+  }
 }
 function pauseTimer(){ if (state !== 'running') return; state = 'paused'; if (tickTimer) { clearInterval(tickTimer); tickTimer = null; } pushState(); }
 function resumeTimer(){
@@ -131,10 +160,11 @@ async function completeSession(){
 
   const sessions = await readJSON('sessions.json', []); sessions.push(session); await writeJSON('sessions.json', sessions);
 
-  try { await appendToSheet(session); } catch (e) { await appendCSV(session); }
+  try { const sheetRow = await appendToSheet(session); if (typeof sheetRow === 'number') session.sheetRow = sheetRow; } catch (e) { await appendCSV(session); }
 
   state='idle'; remainingSec = durationSec; startedAt = null; sessionUrl=''; pushState();
   broadcast({ type: 'session:complete', payload: session });
+  notify('90 Minutos — Sesión completada', `${session.category} · ${session.durationMin} min`);
 }
 
 const app = express(); app.use(express.json());
@@ -149,7 +179,6 @@ app.use((req,res,next)=>{
   next();
 });
 
-const rootDir = path.join(__dirname, '..');
 app.use('/overlay', express.static(path.join(rootDir, 'overlay')));
 app.use('/dashboard', express.static(path.join(rootDir, 'dashboard')));
 app.use('/sessions', express.static(path.join(rootDir, 'sessions')));
@@ -207,6 +236,32 @@ app.get('/api/stats', async (req,res)=>{
 });
 app.get('/api/state', (req,res)=>{ res.json({ state, durationSec, remainingSec, category, sessionName, language, sessionType, sessionUrl, startedAtISO: startedAt? startedAt.toISOString(): null }); });
 
+app.get('/api/health', (req,res)=>{
+  const uptimeSec = Math.floor(process.uptime());
+  const h = Math.floor(uptimeSec / 3600);
+  const m = Math.floor((uptimeSec % 3600) / 60);
+  const uptime = h > 0 ? `${h}h ${m}m` : `${m}m`;
+  const remaining = (() => {
+    const rm = Math.floor(remainingSec / 60);
+    const rs = remainingSec % 60;
+    return `${rm}m ${String(rs).padStart(2,'0')}s`;
+  })();
+  res.json({
+    ok: true, pid: process.pid, uptime,
+    timer: { state, remaining, category, sessionName },
+    wsClients: clients.size
+  });
+});
+
+app.post('/api/telegram/status', async (req,res)=>{
+  try {
+    const sent = await sendStatus();
+    res.json({ ok: sent });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // Google & Sheets
 app.get('/api/google/auth', beginAuth);
 app.get('/api/google/callback', handleCallback);
@@ -220,8 +275,10 @@ app.post('/api/sessions/importFromSheets', async (req,res)=>{
     const rows = await listSheetRows(); // [{categoria,duracion,lenguaje,fecha,sesion}]
     const sessions = [];
     for (const r of rows){
+      if (!r.fecha) continue; // saltar filas vacías
       // fecha en YYYY-MM-DD
       const startLocal = new Date(r.fecha + 'T12:00:00'); // medio día local
+      if (isNaN(startLocal.getTime())) continue; // saltar fechas inválidas
       const endLocal = new Date(startLocal.getTime() + (r.duracion||0)*60*1000);
       sessions.push({
         id: startLocal.getTime(),
@@ -241,6 +298,32 @@ app.post('/api/sessions/importFromSheets', async (req,res)=>{
   } catch(e){
     res.status(500).json({ error: String(e.message||e) });
   }
+});
+
+// Govee Lights API
+app.get('/api/lights/devices', (req,res)=> res.json(DEVICES));
+app.get('/api/lights/presets', (req,res)=> res.json(PRESETS));
+
+app.post('/api/lights/on', async (req,res)=>{
+  try { await allOn(); res.json({ ok: true }); } catch(e){ res.status(500).json({ error: e.message }); }
+});
+app.post('/api/lights/off', async (req,res)=>{
+  try { await allOff(); res.json({ ok: true }); } catch(e){ res.status(500).json({ error: e.message }); }
+});
+app.post('/api/lights/:device/on', async (req,res)=>{
+  const dev = DEVICES[req.params.device];
+  if (!dev) return res.status(404).json({ error: 'dispositivo no encontrado' });
+  try { await turnOn(dev); res.json({ ok: true }); } catch(e){ res.status(500).json({ error: e.message }); }
+});
+app.post('/api/lights/:device/off', async (req,res)=>{
+  const dev = DEVICES[req.params.device];
+  if (!dev) return res.status(404).json({ error: 'dispositivo no encontrado' });
+  try { await turnOff(dev); res.json({ ok: true }); } catch(e){ res.status(500).json({ error: e.message }); }
+});
+app.post('/api/lights/preset/:name', async (req,res)=>{
+  const name = req.params.name;
+  if (!PRESETS[name]) return res.status(404).json({ error: 'preset no encontrado' });
+  try { await applyPreset(name); res.json({ ok: true }); } catch(e){ res.status(500).json({ error: e.message }); }
 });
 
 app.get('/', (req,res)=> res.redirect('/dashboard/index.html'));
@@ -275,3 +358,5 @@ wss.on('connection', (ws)=>{
   });
   ws.on('close', ()=> clients.delete(ws));
 });
+
+startTelegramBot();

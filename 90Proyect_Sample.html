@@ -183,14 +183,19 @@
     (()=>{ // IIFE único (un solo fetch y datos compartidos)
       const params = new URLSearchParams(location.search);
       const queryCSV = params.get('csv') || '';
-      const RAW_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSHC2ih90tNCBbcb_RkupiKV2lufiK4fBoNJ7xZcukTYtu0_jzfRit-CrD6U9fnix_J_P1AlvfWt7GT/pub?gid=0&single=true&output=csv';
-    const CSV_URL = "https://r.jina.ai/http://" + RAW_CSV.replace(/^https?:\/\//,'');
-    const WEEK_GOAL_HOURS = 37;
-   
-
-
+      const RAW_CSV = (window.ANIMATEK90_CSV_URL || queryCSV || '').trim();
+      const CSV_URL = RAW_CSV ? "https://r.jina.ai/http://" + RAW_CSV.replace(/^https?:\/\//,'') : null;
+      const SAMPLE_CSV = `Categoria,Duracion,Fecha,Sesion,URL
+Bitwig Production,120,2024-04-01,Sesión 241,https://youtu.be/demo-bitwig
+Digitakt Sketching,90,2024-04-03,Sesión 242,https://youtu.be/demo-digitakt
+VCV Rack Patch,75,2024-04-05,Sesión 243,
+Oxi One Ideas,60,2024-04-06,Sesión 244,https://youtu.be/demo-oxi
+Bitwig Production,95,2024-05-02,Sesión 245,
+Digitakt Sketching,110,2024-05-05,Sesión 246,https://youtu.be/demo-digitakt-2
+Field Recording,80,2024-05-08,Sesión 247,
+VCV Rack Patch,100,2024-05-10,Sesión 248,https://youtu.be/demo-vcv`;
       let usingSample = !CSV_URL;
-   
+      const WEEK_GOAL_HOURS = 37;
   
       const NOW = new Date();
       const NOW_Y = NOW.getFullYear(), NOW_M = NOW.getMonth();

@@ -16,8 +16,7 @@ coverage/
 server/.env
 
 # Datos y tokens locales
-server/data/tokens.json
-server/data/sessions.json
+server/data/
 sessions/
 *.ics
 *.csv
@@ -26,6 +25,9 @@ Snippet/
 # Logs
 logs/
 *.log
+
+# PID
+.server.pid
 
 # SO / editor
 .DS_Store
