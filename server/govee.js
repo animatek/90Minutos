@@ -2,8 +2,8 @@ const API = 'https://developer-api.govee.com/v1/devices/control';
 const KEY = process.env.GOVEE_API_KEY;
 
 const DEVICES = {
-  estudio: { device: 'DA:1C:DD:6E:84:C6:55:6A', model: 'H6047', name: 'Estudio Javi' },
-  salon:   { device: '53:5E:D3:36:36:37:37:06', model: 'H6046', name: 'Luz Salon Tv' },
+  estudio: { device: process.env.GOVEE_DEVICE_ESTUDIO || '', model: process.env.GOVEE_MODEL_ESTUDIO || 'H6047', name: 'Estudio' },
+  salon:   { device: process.env.GOVEE_DEVICE_SALON   || '', model: process.env.GOVEE_MODEL_SALON   || 'H6046', name: 'Salon' },
 };
 
 // Rate limit: 10 req/min GLOBAL (all devices share the same key).

@@ -29,6 +29,10 @@ logs/
 # PID
 .server.pid
 
+# Agentes / AI
+.agent/
+.claude/
+
 # SO / editor
 .DS_Store
 Thumbs.db

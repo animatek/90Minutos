@@ -16,6 +16,7 @@
       <a href="/overlay/index.html" target="_blank">Overlay</a>
       <a href="https://animatek.net/90-minutos/" target="_blank" rel="noopener">Laboratorio 90</a>
       <a id="openSheet" href="#" target="_blank">Base de datos</a>
+      <span id="wsStatus" class="ws-indicator ws-off" title="Desconectado">●</span>
       <button id="themeToggle" title="Cambiar tema">🌙</button>
       <button id="btnAuth">Conectar Google</button>
     </nav>
@@ -33,6 +34,45 @@
       <span class="streak-icon">🔥</span>
       <span class="streak-count"><span id="streakDays">0</span> días racha</span>
     </div>
+    <div class="streak-container best-streak-container">
+      <span class="streak-icon">🏆</span>
+      <span class="streak-count best-streak-count"><span id="bestStreak">0</span> mejor racha</span>
+    </div>
+    <div class="achievements-container" id="achievementsBadges"></div>
+  </section>
+
+  <section class="kpi-grid">
+    <div class="kpi-card">
+      <span class="kpi-value" id="kpiTotalHours">0</span>
+      <span class="kpi-label">Horas totales</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-value" id="kpiWeekSessions">0</span>
+      <span class="kpi-label">Sesiones esta semana</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-value" id="kpiAvgDuration">0</span>
+      <span class="kpi-label">Duración media (min)</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-value" id="kpiBestDay">—</span>
+      <span class="kpi-label">Día más productivo</span>
+    </div>
+    <div class="kpi-card kpi-card-wide">
+      <span class="kpi-label" style="margin-bottom:4px">Esta semana vs anterior</span>
+      <div class="week-compare">
+        <div class="week-compare-item">
+          <span class="week-compare-label">Horas</span>
+          <span class="week-compare-value" id="wcHoursThis">0</span>
+          <span class="week-compare-delta" id="wcHoursDelta"></span>
+        </div>
+        <div class="week-compare-item">
+          <span class="week-compare-label">Sesiones</span>
+          <span class="week-compare-value" id="wcSessionsThis">0</span>
+          <span class="week-compare-delta" id="wcSessionsDelta"></span>
+        </div>
+      </div>
+    </div>
   </section>
 
   <section class="control-grid">
@@ -48,6 +88,27 @@
           <div class="rc-progress-bar" id="rcTimerProgress"></div>
         </div>
       </div>
+      <div class="pomodoro-bar" id="pomodoroBar">
+        <label class="pomodoro-toggle">
+          <input type="checkbox" id="pomodoroEnabled"> Pomodoro
+        </label>
+        <div class="pomodoro-controls" id="pomodoroControls" style="display:none">
+          <div class="pomodoro-field">
+            <span>Trabajo</span>
+            <input type="number" id="pomodoroWork" min="1" max="120" value="25" class="pomodoro-input"> min
+          </div>
+          <div class="pomodoro-field">
+            <span>Descanso</span>
+            <input type="number" id="pomodoroBreak" min="1" max="60" value="5" class="pomodoro-input"> min
+          </div>
+          <div class="pomodoro-field">
+            <span>Rounds</span>
+            <input type="number" id="pomodoroRounds" min="1" max="20" value="4" class="pomodoro-input">
+          </div>
+          <span id="pomodoroStatus" class="pomodoro-status"></span>
+        </div>
+      </div>
+      <div class="template-quickstart" id="templateQuickstart"></div>
       <div class="row rc-actions">
         <button id="rcStart">Start</button>
         <button id="rcPause">Pause</button>
@@ -83,31 +144,56 @@
     </div>
   </section>
 
-  <section class="card lights-card">
-    <h2>Luces</h2>
-    <div class="lights-grid">
-      <div class="lights-group">
-        <span class="lights-group-label">Todas</span>
-        <div class="lights-buttons">
-          <button id="lightsAllOn" class="btn-light btn-light-on">Encender</button>
-          <button id="lightsAllOff" class="btn-light btn-light-off">Apagar</button>
-        </div>
+  <section class="activity-row">
+    <div class="card calendar-card">
+      <div class="calendar-header">
+        <button id="calPrev" class="btn-icon">◀</button>
+        <h2 id="calTitle">—</h2>
+        <button id="calNext" class="btn-icon">▶</button>
       </div>
-      <div class="lights-group">
-        <span class="lights-group-label">Estudio</span>
-        <div class="lights-buttons">
-          <button id="lightsEstudioOn" class="btn-light btn-light-on">On</button>
-          <button id="lightsEstudioOff" class="btn-light btn-light-off">Off</button>
-        </div>
+      <div class="calendar-grid" id="calendarGrid"></div>
+    </div>
+    <div class="card heatmap-card">
+      <h2>Actividad</h2>
+      <div class="heatmap-container">
+        <div class="heatmap-grid" id="heatmapGrid"></div>
       </div>
-      <div class="lights-group">
-        <span class="lights-group-label">Salon</span>
-        <div class="lights-buttons">
-          <button id="lightsSalonOn" class="btn-light btn-light-on">On</button>
-          <button id="lightsSalonOff" class="btn-light btn-light-off">Off</button>
-        </div>
+      <div class="heatmap-legend">
+        <span class="heatmap-legend-label">Menos</span>
+        <div class="heatmap-legend-cell heatmap-cell"></div>
+        <div class="heatmap-legend-cell heatmap-cell" data-level="1"></div>
+        <div class="heatmap-legend-cell heatmap-cell" data-level="2"></div>
+        <div class="heatmap-legend-cell heatmap-cell" data-level="3"></div>
+        <div class="heatmap-legend-cell heatmap-cell" data-level="4"></div>
+        <span class="heatmap-legend-label">Más</span>
       </div>
-      <div class="lights-presets" id="lightsPresets"></div>
+    </div>
+    <div class="card lights-card">
+      <h2>Luces</h2>
+      <div class="lights-grid">
+        <div class="lights-group">
+          <span class="lights-group-label">Todas</span>
+          <div class="lights-buttons">
+            <button id="lightsAllOn" class="btn-light btn-light-on">Encender</button>
+            <button id="lightsAllOff" class="btn-light btn-light-off">Apagar</button>
+          </div>
+        </div>
+        <div class="lights-group">
+          <span class="lights-group-label">Estudio</span>
+          <div class="lights-buttons">
+            <button id="lightsEstudioOn" class="btn-light btn-light-on">On</button>
+            <button id="lightsEstudioOff" class="btn-light btn-light-off">Off</button>
+          </div>
+        </div>
+        <div class="lights-group">
+          <span class="lights-group-label">Salon</span>
+          <div class="lights-buttons">
+            <button id="lightsSalonOn" class="btn-light btn-light-on">On</button>
+            <button id="lightsSalonOff" class="btn-light btn-light-off">Off</button>
+          </div>
+        </div>
+        <div class="lights-presets" id="lightsPresets"></div>
+      </div>
     </div>
   </section>
 
@@ -131,6 +217,18 @@
             </div>
             <div id="catList" class="categories-grid"></div>
           </div>
+          <div class="config-section">
+            <h3>Auto-luces por categoria</h3>
+            <div id="lightMappingList" class="light-mapping-list"></div>
+          </div>
+          <div class="config-section template-section">
+            <h3>Templates</h3>
+            <div class="add-category-bar">
+              <input id="newTemplateName" class="modern-input compact-input" placeholder="Nombre template" />
+              <button id="addTemplate" class="btn-secondary">+ Template</button>
+            </div>
+            <div id="templateList" class="template-list"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -142,6 +240,8 @@
       <div class="sessions-actions">
         <button id="importSheets" class="btn-icon" title="Sincronizar desde Sheets">🔄 Sync</button>
         <button id="exportCSV" class="btn-icon" title="Exportar CSV">⬇ CSV</button>
+        <button id="backupBtn" class="btn-icon" title="Exportar backup completo">💾 Backup</button>
+        <label class="btn-icon" title="Restaurar backup" style="cursor:pointer;margin:0">📂 Restore<input id="restoreBtn" type="file" accept=".json" style="display:none"></label>
         <button id="clearAll" class="btn-danger-text" title="Borrar todas">🗑 Borrar todo</button>
       </div>
     </div>
@@ -181,26 +281,63 @@
           <option value="without">Sin URL</option>
         </select>
       </div>
+      <div class="search-container">
+        <span class="search-icon">🔍</span>
+        <input id="searchSessions" class="search-input" type="text" placeholder="Buscar sesiones..." />
+      </div>
       <button id="clearFilters" class="btn-text">Limpiar</button>
+    </div>
+
+    <div class="bulk-bar" id="bulkBar" style="display:none">
+      <span id="bulkCount">0 seleccionadas</span>
+      <button id="bulkDelete" class="btn-danger-text">🗑 Borrar seleccionadas</button>
+      <button id="bulkExport" class="btn-icon">⬇ Exportar seleccionadas</button>
     </div>
 
     <div class="table-responsive">
       <table id="sessions" class="modern-table">
         <thead>
           <tr>
+            <th style="width:40px"><input type="checkbox" id="selectAll" class="session-check"></th>
             <th>Duración</th>
             <th>Categoría</th>
             <th>Tipo</th>
             <th>Fecha</th>
             <th>URL</th>
+            <th>Notas</th>
             <th style="text-align:right">Acciones</th>
           </tr>
         </thead>
         <tbody></tbody>
       </table>
     </div>
+    <div class="pagination" id="pagination"></div>
   </section>
 
+  <!-- Notes Modal -->
+  <div id="notesModal" class="modal-overlay" style="display:none">
+    <div class="modal-content">
+      <h3>Notas de sesión</h3>
+      <textarea id="notesText" class="notes-textarea" rows="6" placeholder="Escribe notas sobre esta sesión..."></textarea>
+      <div class="modal-actions">
+        <button id="notesSave" class="btn-primary">Guardar</button>
+        <button id="notesCancel" class="btn-secondary">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shortcut Help -->
+  <div id="shortcutHelp" class="shortcut-help" style="display:none">
+    <h4>Atajos de teclado</h4>
+    <ul>
+      <li><kbd>Space</kbd> Play / Pause / Resume</li>
+      <li><kbd>R</kbd> Reset timer</li>
+      <li><kbd>Ctrl+S</kbd> Guardar config</li>
+      <li><kbd>?</kbd> Mostrar/ocultar atajos</li>
+    </ul>
+  </div>
+
+  <div id="toastContainer" class="toast-container"></div>
   <script src="dashboard.js"></script>
 </body>
 
