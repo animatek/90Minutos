@@ -1,9 +1,9 @@
 {
   "name": "animatek-timer",
-  "version": "2.5.1",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
-  "description": "Timer 90min para OBS + Stream Deck + Calendar + Sheets",
+  "description": "Timer de sesiones · Dashboard · Google Sheets · OBS Overlay",
   "scripts": {
     "dev": "node server/index.js",
     "stop": "if [ -f .server.pid ]; then kill $(cat .server.pid) 2>/dev/null && rm -f .server.pid && echo '[90Minutos] Servidor detenido'; else echo '[90Minutos] No hay servidor corriendo'; fi",
