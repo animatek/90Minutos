@@ -198,115 +198,6 @@ const PAGE_SIZE = 20;
 let currentSearchQuery = '';
 let lastFilteredSessions = [];
 
-function calculateGamification(sessions) {
-  // 1. XP & Level
-  // Formula: Level N requires 100 * N^1.5 XP total? Or simple: 100 XP per level for now.
-  // Let's do: 1 minute = 1 XP.
-  // Level 1: 0-600 XP (0-10h)
-  // Level 2: 600-1500 XP...
-  // Simple linear for MVP: Level = floor(TotalMinutes / 600) + 1. (Every 10 hours = 1 level up)
-
-  let totalMinutes = 0;
-  const uniqueDates = new Set();
-
-  (sessions || []).forEach(s => {
-    const min = (s.durationSec ? s.durationSec / 60 : s.durationMin) || 0;
-    totalMinutes += min;
-    if (s.startISO) uniqueDates.add(s.startISO.split('T')[0]);
-  });
-
-  const xpPerLevel = 600; // 10 hours
-  const currentLevel = Math.floor(totalMinutes / xpPerLevel) + 1;
-  const currentLevelXP = Math.floor(totalMinutes % xpPerLevel);
-  const nextLevelXP = xpPerLevel;
-  const progressPct = (currentLevelXP / nextLevelXP) * 100;
-
-  // Render Level
-  const levelEl = document.getElementById('userLevel');
-  const fillEl = document.getElementById('xpBarFill');
-  const currXPEl = document.getElementById('currentXP');
-  const nextXPEl = document.getElementById('nextLevelXP');
-
-  if (levelEl) levelEl.textContent = currentLevel;
-  if (fillEl) fillEl.style.width = `${progressPct}%`;
-  if (currXPEl) currXPEl.textContent = Math.floor(currentLevelXP);
-  if (nextXPEl) nextXPEl.textContent = nextLevelXP;
-
-  // 2. Streaks
-  // Sort dates desc
-  const sortedDates = Array.from(uniqueDates).sort().reverse();
-  let streak = 0;
-  if (sortedDates.length > 0) {
-    const today = new Date().toISOString().split('T')[0];
-    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-
-    // Check if most recent is today or yesterday
-    const last = sortedDates[0];
-    if (last === today || last === yesterday) {
-      streak = 1;
-      let checkDate = new Date(last);
-      for (let i = 1; i < sortedDates.length; i++) {
-        checkDate.setDate(checkDate.getDate() - 1);
-        const expected = checkDate.toISOString().split('T')[0];
-        if (sortedDates[i] === expected) {
-          streak++;
-        } else {
-          break;
-        }
-      }
-    }
-  }
-
-  // Best streak (historical max)
-  let bestStreak = streak;
-  if (sortedDates.length > 1) {
-    const asc = Array.from(uniqueDates).sort();
-    let run = 1;
-    for (let i = 1; i < asc.length; i++) {
-      const prev = new Date(asc[i - 1]);
-      const curr = new Date(asc[i]);
-      const diff = (curr - prev) / 86400000;
-      if (diff === 1) { run++; } else { run = 1; }
-      if (run > bestStreak) bestStreak = run;
-    }
-  }
-
-  const streakEl = document.getElementById('streakDays');
-  if (streakEl) streakEl.textContent = streak;
-
-  const bestStreakEl = document.getElementById('bestStreak');
-  if (bestStreakEl) bestStreakEl.textContent = bestStreak;
-
-  // Achievements
-  const achievements = [
-    { id: 'first',      icon: '🎵', name: 'Primera sesion',   check: () => (sessions || []).length >= 1 },
-    { id: 'ten',        icon: '🔟', name: '10 sesiones',      check: () => (sessions || []).length >= 10 },
-    { id: 'fifty',      icon: '💪', name: '50 sesiones',      check: () => (sessions || []).length >= 50 },
-    { id: 'hundred',    icon: '💯', name: '100 sesiones',     check: () => (sessions || []).length >= 100 },
-    { id: 'hours10',    icon: '⏰', name: '10 horas',          check: () => totalMinutes >= 600 },
-    { id: 'hours50',    icon: '🕐', name: '50 horas',          check: () => totalMinutes >= 3000 },
-    { id: 'hours100',   icon: '🏅', name: '100 horas',         check: () => totalMinutes >= 6000 },
-    { id: 'streak3',    icon: '🔥', name: '3 dias racha',      check: () => bestStreak >= 3 },
-    { id: 'streak7',    icon: '🔥', name: '7 dias racha',      check: () => bestStreak >= 7 },
-    { id: 'streak30',   icon: '🔥', name: '30 dias racha',     check: () => bestStreak >= 30 },
-    { id: 'marathon',   icon: '🏃', name: 'Sesion de 2h+',     check: () => (sessions || []).some(s => ((s.durationSec ? s.durationSec / 60 : s.durationMin) || 0) >= 120) },
-    { id: 'night',      icon: '🌙', name: 'Nocturno',          check: () => (sessions || []).some(s => { if (!s.startISO) return false; const h = new Date(s.startISO).getHours(); return h >= 0 && h < 5; }) },
-    { id: 'cats5',      icon: '🎨', name: '5 categorias',      check: () => new Set((sessions || []).map(s => s.category).filter(Boolean)).size >= 5 },
-  ];
-
-  const container = document.getElementById('achievementsBadges');
-  if (container) {
-    container.innerHTML = '';
-    for (const a of achievements) {
-      const unlocked = a.check();
-      const badge = document.createElement('div');
-      badge.className = `achievement-badge ${unlocked ? 'unlocked' : 'locked'}`;
-      badge.title = a.name + (unlocked ? ' ✓' : ' (bloqueado)');
-      badge.innerHTML = `<span class="achievement-icon">${a.icon}</span>${escapeHTML(a.name)}`;
-      container.appendChild(badge);
-    }
-  }
-}
 
 function renderKPIs(sessions) {
   const totalHoursEl = document.getElementById('kpiTotalHours');
@@ -538,8 +429,6 @@ function renderCalendar(sessions) {
 function renderStats(stats) {
   latestStats = stats;
 
-  // Calculate Gamification
-  calculateGamification(allSessions);
 
   // KPI Cards
   renderKPIs(allSessions);
