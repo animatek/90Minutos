@@ -1025,7 +1025,7 @@ function connectBus() {
 function sendCmd(action, payload) { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'command', action, payload })); }
 function populateCategorySelect(cfg) {
   const sel = document.getElementById('rcCategory'); if (!sel) return; sel.innerHTML = '';
-  for (const c of (cfg.categories || [])) { const o = document.createElement('option'); o.value = c; o.textContent = c; sel.appendChild(o); }
+  for (const c of collectAllCategories()) { const o = document.createElement('option'); o.value = c; o.textContent = c; sel.appendChild(o); }
   applyCategoryColor(sel);
 }
 async function setOpenSheetLink() {
@@ -1038,7 +1038,8 @@ async function refreshAll() {
   const [stats, sessions] = await Promise.all([loadStats(), loadSessions()]);
   allSessions = sortSessionsByStart(sessions || []);
   assignCategoryColors();
-  applyCategoryColor(document.getElementById('rcCategory'));
+  populateCategorySelect({});
+
   renderStats(stats);
   populateMonthFilter(allSessions);
   populateYearFilter(allSessions);
