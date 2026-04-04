@@ -62,8 +62,6 @@ case "${1:-start}" in
       fi
       # Desktop notification
       notify-send -i "$APP_DIR/icon/90.png" "90 Minutos" "$(echo -e "$BODY")" 2>/dev/null
-      # Trigger Telegram /status report
-      curl -s --max-time 5 -X POST "$URL/api/telegram/status" >/dev/null 2>&1 &
       echo -e "[90Minutos] $BODY"
     else
       notify-send -i "$APP_DIR/icon/90.png" "90 Minutos" "Servidor detenido" 2>/dev/null

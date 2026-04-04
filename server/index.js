@@ -7,7 +7,6 @@ import { execFile } from 'child_process';
 import dotenv from 'dotenv';
 import { readJSON, writeJSON, paths } from './storage.js';
 import { beginAuth, handleCallback, createCalendarEvent, generateICS, hasGoogleAuth, appendToSheet, listSheetRows } from './google.js';
-import { startTelegramBot, sendStatus } from './telegram.js';
 import { DEVICES, PRESETS, turnOn, turnOff, allOn, allOff, applyPreset } from './govee.js';
 
 dotenv.config();
@@ -395,15 +394,6 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-app.post('/api/telegram/status', async (req, res) => {
-  try {
-    const sent = await sendStatus();
-    res.json({ ok: sent });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
 // Google & Sheets
 app.get('/api/google/auth', beginAuth);
 app.get('/api/google/callback', handleCallback);
@@ -504,4 +494,3 @@ wss.on('connection', (ws) => {
   ws.on('close', () => clients.delete(ws));
 });
 
-startTelegramBot();
