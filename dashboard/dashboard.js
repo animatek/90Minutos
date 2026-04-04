@@ -78,7 +78,6 @@ function renderConfig(cfg) {
   categoryColors = { ...(cfg.categoryColors || {}) };
   assignCategoryColors();
   renderCategoryGrid(cfg);
-  renderLightMapping(cfg);
 
   // Add Category Logic
   document.getElementById('addCat').onclick = () => {
@@ -185,39 +184,6 @@ function renderCategoryGrid(cfg) {
     card.appendChild(nameInput);
     card.appendChild(btnDel);
     grid.appendChild(card);
-  }
-}
-
-const LIGHT_PRESETS = ['', 'focus', 'streaming', 'movie', 'romantic'];
-const LIGHT_PRESET_LABELS = { '': 'Ninguno', focus: 'Focus', streaming: 'Streaming', movie: 'Movie', romantic: 'Romantic' };
-
-function renderLightMapping(cfg) {
-  const container = document.getElementById('lightMappingList');
-  if (!container) return;
-  container.innerHTML = '';
-  const mapping = cfg.categoryLightPresets || {};
-  for (const cat of cfg.categories || []) {
-    const row = document.createElement('div');
-    row.className = 'light-mapping-row';
-    const label = document.createElement('span');
-    label.textContent = cat;
-    label.style.color = getCategoryColor(cat);
-    const sel = document.createElement('select');
-    for (const p of LIGHT_PRESETS) {
-      const opt = document.createElement('option');
-      opt.value = p;
-      opt.textContent = LIGHT_PRESET_LABELS[p] || p;
-      if ((mapping[cat] || '') === p) opt.selected = true;
-      sel.appendChild(opt);
-    }
-    sel.onchange = () => {
-      if (!cfg.categoryLightPresets) cfg.categoryLightPresets = {};
-      if (sel.value) cfg.categoryLightPresets[cat] = sel.value;
-      else delete cfg.categoryLightPresets[cat];
-    };
-    row.appendChild(label);
-    row.appendChild(sel);
-    container.appendChild(row);
   }
 }
 
@@ -1539,36 +1505,6 @@ async function main() {
     if (resp.ok) { toast(`Importadas ${data.imported} sesiones desde Sheets`, 'success'); await refreshAll(); }
     else { toast('Error: ' + (data.error || 'desconocido'), 'error'); }
   };
-
-  // Lights control
-  async function lightAction(url) {
-    try {
-      const r = await fetch(url, { method: 'POST' });
-      if (!r.ok) { const e = await r.json(); toast('Error: ' + (e.error || r.status), 'error'); }
-    } catch (e) { toast('Error de conexión: ' + e.message, 'error'); }
-  }
-
-  document.getElementById('lightsAllOn').onclick = () => lightAction('/api/lights/on');
-  document.getElementById('lightsAllOff').onclick = () => lightAction('/api/lights/off');
-  document.getElementById('lightsEstudioOn').onclick = () => lightAction('/api/lights/estudio/on');
-  document.getElementById('lightsEstudioOff').onclick = () => lightAction('/api/lights/estudio/off');
-  document.getElementById('lightsSalonOn').onclick = () => lightAction('/api/lights/salon/on');
-  document.getElementById('lightsSalonOff').onclick = () => lightAction('/api/lights/salon/off');
-
-  // Load presets
-  try {
-    const presetsResp = await fetch('/api/lights/presets');
-    const presets = await presetsResp.json();
-    const container = document.getElementById('lightsPresets');
-    for (const [key, p] of Object.entries(presets)) {
-      const btn = document.createElement('button');
-      btn.className = 'btn-light btn-light-preset';
-      btn.textContent = `${p.emoji} ${p.name}`;
-      btn.title = p.desc;
-      btn.onclick = () => lightAction(`/api/lights/preset/${key}`);
-      container.appendChild(btn);
-    }
-  } catch (e) { console.warn('[Lights] presets load failed', e); }
 
   // Export CSV
   document.getElementById('exportCSV').onclick = () => {

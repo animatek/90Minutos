@@ -7,7 +7,6 @@ import { execFile } from 'child_process';
 import dotenv from 'dotenv';
 import { readJSON, writeJSON, paths } from './storage.js';
 import { beginAuth, handleCallback, createCalendarEvent, generateICS, hasGoogleAuth, appendToSheet, listSheetRows } from './google.js';
-import { DEVICES, PRESETS, turnOn, turnOff, allOn, allOff, applyPreset } from './govee.js';
 
 dotenv.config();
 
@@ -105,8 +104,6 @@ function startTimer() {
   if (fresh) {
     const min = Math.round(durationSec / 60);
     notify('90 Minutos — Sesión iniciada', `${category} · ${min} min`);
-    // Auto-lights: apply preset mapped to category
-    autoLightsForCategory(category);
   }
 }
 function pauseTimer() { if (state !== 'running') return; state = 'paused'; if (tickTimer) { clearInterval(tickTimer); tickTimer = null; } pushState(); }
@@ -128,18 +125,6 @@ function setLanguageValue(lang) { if (!lang) return; language = String(lang); pu
 function setSessionTypeValue(t) { if (!t) return; sessionType = String(t); pushState(); }
 function setSessionUrlValue(url) { sessionUrl = (url ?? '').toString(); pushState(); }
 function setDurationSeconds(sec) { const s = Math.max(1, Number(sec) || 5400); durationSec = s; if (state === 'idle') remainingSec = durationSec; pushState(); }
-
-async function autoLightsForCategory(cat) {
-  try {
-    const currentCfg = await readJSON('config.json', defaultConfig);
-    const mapping = currentCfg.categoryLightPresets || {};
-    const presetName = mapping[cat];
-    if (presetName && PRESETS[presetName]) {
-      await applyPreset(presetName);
-      console.log(`[AutoLights] Categoria "${cat}" -> preset "${presetName}"`);
-    }
-  } catch (e) { console.warn('[AutoLights] Error:', e.message); }
-}
 
 async function appendCSV(session) {
   const hdr = 'Categoria,DuracionMin,Lenguaje,Fecha,Sesion,DuracionHHMMSS\n';
@@ -263,7 +248,7 @@ app.use('/dashboard', express.static(path.join(rootDir, 'dashboard')));
 app.use('/sessions', express.static(path.join(rootDir, 'sessions')));
 
 app.get('/api/config', async (req, res) => { const cfg = await readJSON('config.json', defaultConfig); res.json(cfg); });
-const CONFIG_ALLOWED_KEYS = ['defaultDurationMin', 'categories', 'categoryColors', 'theme', 'opacity', 'timezone', 'languages', 'defaultLanguage', 'defaultSessionType', 'templates', 'categoryLightPresets'];
+const CONFIG_ALLOWED_KEYS = ['defaultDurationMin', 'categories', 'categoryColors', 'theme', 'opacity', 'timezone', 'languages', 'defaultLanguage', 'defaultSessionType', 'templates'];
 app.post('/api/config', async (req, res) => {
   const current = await readJSON('config.json', defaultConfig);
   const body = req.body || {};
@@ -430,32 +415,6 @@ app.post('/api/sessions/importFromSheets', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
-});
-
-// Govee Lights API
-app.get('/api/lights/devices', (req, res) => res.json(DEVICES));
-app.get('/api/lights/presets', (req, res) => res.json(PRESETS));
-
-app.post('/api/lights/on', async (req, res) => {
-  try { await allOn(); res.json({ ok: true }); } catch (e) { res.status(500).json({ error: e.message }); }
-});
-app.post('/api/lights/off', async (req, res) => {
-  try { await allOff(); res.json({ ok: true }); } catch (e) { res.status(500).json({ error: e.message }); }
-});
-app.post('/api/lights/:device/on', async (req, res) => {
-  const dev = DEVICES[req.params.device];
-  if (!dev) return res.status(404).json({ error: 'dispositivo no encontrado' });
-  try { await turnOn(dev); res.json({ ok: true }); } catch (e) { res.status(500).json({ error: e.message }); }
-});
-app.post('/api/lights/:device/off', async (req, res) => {
-  const dev = DEVICES[req.params.device];
-  if (!dev) return res.status(404).json({ error: 'dispositivo no encontrado' });
-  try { await turnOff(dev); res.json({ ok: true }); } catch (e) { res.status(500).json({ error: e.message }); }
-});
-app.post('/api/lights/preset/:name', async (req, res) => {
-  const name = req.params.name;
-  if (!PRESETS[name]) return res.status(404).json({ error: 'preset no encontrado' });
-  try { await applyPreset(name); res.json({ ok: true }); } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/', (req, res) => res.redirect('/dashboard/index.html'));
