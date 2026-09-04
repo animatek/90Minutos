@@ -1,137 +1,202 @@
-# 90 Minutos — Animatek Timer
+# 90 Minutos
 
-Timer de sesiones de productividad con dashboard, sincronización con Google Calendar/Sheets y overlay para OBS.
+Registro de tiempo por temas, con SQLite local, panel web y overlay para OBS.
+
+Dos modos de trabajo:
+
+- **Abierto** — eliges un tema y cuenta arriba hasta que paras. El modo del día a día.
+- **Sprint** — cuenta atrás con alarma (90 min por defecto), para sesiones con objetivo.
+
+## Cómo funciona por dentro
+
+Una sesión no guarda una duración: guarda **segmentos de trabajo**. Cada pausa cierra
+un segmento y cada reanudación abre otro, y la duración es la suma de esos segmentos.
+
+Esto tiene tres consecuencias que son el motivo del diseño:
+
+- **El tiempo en pausa no cuenta como trabajado.** Pausar para comer no infla la sesión.
+- **No hay estado en memoria que perder.** «Hay sesión activa» es la fila con
+  `ended_at IS NULL`; «está corriendo» es que tenga un segmento sin cerrar. Si el
+  servidor se reinicia, al arrancar lo encuentra y sigue.
+- **Un corte brusco no inventa horas.** Mientras corre se escribe un `heartbeat_at`
+  cada 15 s; al recuperar, el segmento abierto se cierra en ese último latido y la
+  sesión queda **en pausa** para que decidas. Se pierden 15 s como máximo, en vez de
+  registrar las ocho horas que el equipo pasó apagado.
 
 ## Arquitectura
 
 ```
-90Minutos/
-  server/          Express + WebSocket (timer, API, integraciones)
-    index.js         Servidor principal, rutas API, lógica del timer
-    google.js        OAuth2, Calendar, Sheets
-    storage.js       Lectura/escritura atómica de JSON
-    data/            Config, sesiones, tokens (gitignored)
-  dashboard/       Panel de control web
-    index.html       UI principal
-    dashboard.js     Lógica del dashboard
-    dashboard.css    Estilos (dark/light mode)
-  overlay/         Browser source para OBS
-  scripts/         Scripts auxiliares (auth, packaging, shell)
-  icon/            Icono de la app
+server/
+  config.js     Rutas y variables de entorno. Cero rutas fijas.
+  db.js         SQLite: esquema, migraciones, consultas
+  timer.js      Máquina de estados (abierto | sprint), basada en timestamps
+  index.js      HTTP + WebSocket
+dashboard/      Panel web (index.html, dashboard.js, charts.js, panel.css)
+overlay/        Browser source para OBS
+migrate/        JSON → SQLite y reparto de colores
+test/           Pruebas de la lógica de duración
+scripts/        Arranque y parada
 ```
+
+### Dónde viven los datos
+
+Todo en **un solo archivo**, fuera del repo:
+
+```
+~/.local/share/90minutos/90minutos.db
+```
+
+Ajustes, temas y sesiones están dentro. Mudar la app a otro equipo (o a una
+Raspberry Pi) es copiar el repo y ese archivo. Se cambia con `DATA_DIR` o `DB_PATH`
+en el `.env`.
+
+> **No pongas el `.db` en Dropbox, Drive, Nextcloud ni Syncthing.** Sincronizan el
+> archivo completo sin entender cómo escribe SQLite y lo corrompen. Para varios
+> equipos, sirve el servidor en la red (ver más abajo).
+
+### Esquema
+
+```sql
+topics    (id, name, color, palette_slot, archived, sort_order, created_at)
+sessions  (id, topic_id, mode, planned_sec, started_at, ended_at,
+           heartbeat_at, notes, url, language, session_type, source)
+segments  (id, session_id, started_at, ended_at)
+settings  (key, value)
+```
+
+La vista `v_sessions` añade la duración calculada; un segmento sin cerrar cuenta
+hasta ahora mismo, así que la sesión en curso siempre reporta su duración real.
 
 ## Requisitos
 
-- Node.js >= 18
-- (Opcional) Cuenta Google para Calendar/Sheets
+Node.js >= 22. **Sin dependencias nativas**: usa el SQLite integrado en Node, así
+que no hay nada que compilar al cambiar de arquitectura.
 
 ## Instalación
 
 ```bash
-git clone <repo> && cd 90Minutos
 npm install
-cp .env.example .env
-# Editar .env con tus credenciales
+cp .env.example .env      # opcional: por defecto ya funciona
 npm run dev
 ```
 
-El servidor arranca en `http://127.0.0.1:5173`. El dashboard está en `/dashboard/index.html`.
+Panel en `http://127.0.0.1:5173/dashboard/index.html`.
 
-## Variables de entorno
+El panel tiene dos vistas:
 
-| Variable | Descripción | Requerida |
-|----------|-------------|-----------|
-| `PORT` | Puerto HTTP (default: 5173) | No |
-| `HOST` | Host de escucha (default: 127.0.0.1) | No |
-| `BASE_URL` | URL base para OAuth callback | No |
-| `GOOGLE_CLIENT_ID` | Client ID de Google OAuth | Para Calendar/Sheets |
-| `GOOGLE_CLIENT_SECRET` | Client Secret de Google OAuth | Para Calendar/Sheets |
-| `SHEET_ID` | ID del Google Sheet | Para sync Sheets |
-| `GOOGLE_CALENDAR_ID` | ID del calendario (default: primary) | No |
+- **Control** — timer, creación de temas, historial editable y ajustes.
+- **Estadísticas** — progreso semanal/mensual/anual, KPIs, horas por tema,
+  últimos días, mapa de actividad y calendario.
+
+El objetivo semanal se configura en Ajustes; los objetivos mensual y anual se
+derivan multiplicándolo por 4 y por 52.
+
+### Migrar desde la versión anterior (JSON + Google Sheets)
+
+```bash
+npm run migrate -- --dry-run   # informe: qué categorías se unifican, sin escribir
+npm run migrate                # migra, con copia de seguridad previa
+npm run recolor                # reparte la paleta validada entre los temas top
+```
+
+La migración deduplica los ids que colisionaban, unifica las categorías escritas a
+mano y **verifica que el número de sesiones y las horas cuadran exactamente** con el
+JSON original; si no cuadran, aborta sin dejar la base a medias.
 
 ## Comandos
 
 ```bash
-npm run dev          # Iniciar servidor
-npm run stop         # Detener servidor
-npm run google:auth  # Abrir flujo OAuth de Google
+npm run dev          # arrancar
+npm test             # pruebas de la lógica de duración
+scripts/90minutos.sh start|stop|restart|status
 ```
 
-## Dashboard
+Para instalar el lanzador del menú de aplicaciones sin depender de dónde esté
+clonado el repo:
 
-Panel de control accesible en `http://127.0.0.1:5173/dashboard/index.html`.
+```bash
+scripts/install-desktop.sh
+```
 
-### Funcionalidades
+## Variables de entorno
 
-- **Control remoto** del timer (start/pause/resume/reset/finish) con WebSocket en tiempo real
-- **Templates** de sesión — inicio rápido con categoría, duración y tipo preconfigurados
-- **KPI Cards** — horas totales, sesiones esta semana, duración media, día más productivo
-- **Heatmap de actividad** — calendario estilo GitHub contributions (~6 meses)
-- **Gráficos** — distribución por categoría (donut), últimos 7 días (barras), tendencia mensual (line chart), radar de categorías
-- **Gamificación** — sistema de XP/niveles (10h = 1 nivel), racha diaria y mejor racha
-- **Achievements** — 13 badges desbloqueables
-- **Vista calendario mensual** — navegación mes a mes con horas por día
-- **Comparativa semanal** — esta semana vs anterior con delta porcentual
-- **Historial de sesiones** — tabla con filtros, búsqueda, paginación (20/página), selección múltiple y borrado en lote
-- **Gestión de categorías** — crear, renombrar, color picker, eliminar
-- **Export CSV** — descarga de sesiones filtradas
-- **Sync Google Sheets** — importar sesiones desde el Sheet configurado
-- **Backup/Restore** — exportar/importar config + sesiones como JSON
-- **Duplicar sesión** — clonar una sesión existente
-- **Notas por sesión** — texto libre asociado a cada sesión
-- **Modo Pomodoro** — ciclos trabajo/descanso configurables
-- **Dark/Light mode** — toggle con persistencia en localStorage
-- **Atajos de teclado** — Space (play/pause), R (reset), Ctrl+S (guardar), ? (ayuda)
+| Variable | Descripción | Por defecto |
+|----------|-------------|-------------|
+| `PORT` | Puerto HTTP | `5173` |
+| `WS_PORT` | Puerto WebSocket | `8765` |
+| `HOST` | Interfaz de escucha | `127.0.0.1` |
+| `AUTH_TOKEN` | Token de acceso. **Obligatorio si `HOST` no es loopback** | vacío |
+| `DATA_DIR` | Directorio de datos | `~/.local/share/90minutos` |
+| `DB_PATH` | Ruta del `.db` | `$DATA_DIR/90minutos.db` |
 
-## API REST
+## Acceso desde otros dispositivos
 
-Todos los endpoints escuchan en `127.0.0.1:5173`.
+Por defecto el servidor solo escucha en `127.0.0.1`. Para llegar desde el móvil o el
+portátil:
+
+```bash
+# .env
+HOST=0.0.0.0
+AUTH_TOKEN=…        # node -e "console.log(crypto.randomUUID())"
+```
+
+Si `HOST` no es loopback y `AUTH_TOKEN` está vacío, **el servidor se niega a
+arrancar** en lugar de quedar abierto en la red. Entra una vez con
+`http://tu-host:5173/dashboard/index.html?token=EL_TOKEN` y queda en una cookie.
+
+Para acceder desde fuera de casa, Tailscale es la opción que no obliga a abrir puertos.
+
+## API
 
 | Método | Ruta | Descripción |
 |--------|------|-------------|
-| `GET` | `/api/state` | Estado actual del timer |
-| `GET` | `/api/config` | Configuración |
-| `POST` | `/api/config` | Actualizar configuración |
-| `GET` | `/api/sessions` | Listar sesiones |
-| `POST` | `/api/sessions` | Crear/duplicar sesión |
-| `PUT` | `/api/sessions/:id` | Editar sesión |
-| `DELETE` | `/api/sessions/:id` | Borrar sesión |
-| `DELETE` | `/api/sessions` | Borrar todas (requiere header `X-Confirm-Delete: true`) |
+| `GET` | `/api/state` | Estado del timer |
+| `POST` | `/api/timer/start` | Arrancar (`topicId` o `topic`, `mode`, `plannedMin`). Con sesión activa, la cierra y abre la nueva |
+| `POST` | `/api/timer/pause` · `resume` · `stop` | Pausar · reanudar · guardar |
+| `POST` | `/api/timer/discard` | Descartar sin guardar |
+| `POST` | `/api/timer/extend` | Mover el objetivo del sprint (`min` o `sec`) |
+| `POST` | `/api/timer/mode` | Cambiar de modo en caliente |
+| `POST` | `/api/timer/meta` | URL, notas, idioma, tipo o tema de la sesión en curso |
+| `GET` | `/api/topics` | Listar temas (`?all=true` incluye archivados) |
+| `POST` `PATCH` `DELETE` | `/api/topics[/:id]` | Crear, editar, borrar |
+| `POST` | `/api/topics/:id/merge` | Fusionar en otro tema (`targetId`) |
+| `GET` | `/api/sessions` | Historial (`from`, `to`, `topicId`, `limit`, `offset`) |
+| `POST` `PATCH` `DELETE` | `/api/sessions[/:id]` | Crear manual, editar, borrar |
 | `POST` | `/api/sessions/bulk-delete` | Borrado múltiple |
-| `POST` | `/api/sessions/importFromSheets` | Importar desde Google Sheets |
-| `GET` | `/api/stats` | Estadísticas por categoría |
-| `GET` | `/api/health` | Health check del servidor |
-| `GET` | `/api/backup` | Exportar backup completo |
-| `POST` | `/api/restore` | Restaurar desde backup |
-| `GET` | `/api/google/auth` | Iniciar flujo OAuth |
-| `GET` | `/api/google/callback` | Callback OAuth |
-| `GET` | `/api/sheet/id` | Obtener Sheet ID configurado |
+| `GET` | `/api/stats` | Totales por tema y por día |
+| `GET` | `/api/export.csv` | Exportar CSV |
+| `GET` `POST` | `/api/settings` | Ajustes |
+| `GET` `POST` | `/api/backup` · `/api/restore` | Backup completo |
+| `GET` | `/api/health` | Estado del servidor |
+
+Borrar un tema con historial devuelve `409`: hay que archivarlo o fusionarlo, para
+que no se lleve sesiones por delante.
 
 ## WebSocket
 
-Puerto `8765` en `127.0.0.1`. Mensajes JSON:
+Puerto `8765` por defecto, configurable con `WS_PORT`. El panel y el overlay
+consultan el puerto real al servidor; los clientes solo escuchan.
 
-**Server → Client:**
-- `{ type: "state", payload: { state, durationSec, remainingSec, category, ... } }`
-- `{ type: "session:complete", payload: { ... } }`
-- `{ type: "config:update", payload: { ... } }`
-
-**Client → Server:**
-- `{ type: "command", action: "start|pause|resume|reset|finish|add|setCategory|setDurationSec|setLanguage|setSessionType|setSessionUrl", payload: ... }`
-
-## Seguridad
-
-- El servidor solo escucha en `127.0.0.1` (no accesible desde la red)
-- CORS restringido a orígenes exactos (`http://127.0.0.1:5173`, `http://localhost:5173`)
-- Borrado masivo requiere header de confirmación `X-Confirm-Delete`
-- POST /api/config filtra solo keys permitidas (whitelist)
-- Notificaciones de escritorio usan `execFile` (sin shell) para evitar inyección de comandos
-- Dashboard sanitiza HTML en todas las interpolaciones dinámicas
-- `server/data/` y `.env` están en `.gitignore`
+- `{ type: "state", payload: { state, mode, topic, elapsedSec, remainingSec, overtimeSec, todaySec, … } }`
+- `{ type: "session:complete", payload: <sesión> }`
+- `{ type: "alarm", payload: <estado> }` — objetivo del sprint alcanzado en modo prórroga
+- `{ type: "topics:update" }` · `{ type: "settings:update", payload: <ajustes> }`
 
 ## Overlay OBS
 
-Browser source en `http://127.0.0.1:5173/overlay/index.html`. Se conecta vía WebSocket y muestra el timer en tiempo real con dial de progreso y alarma sonora al finalizar.
+Browser source en `http://127.0.0.1:5173/overlay/index.html`. Muestra la cuenta atrás
+en sprint y el tiempo acumulado en modo abierto, con alarma al finalizar.
+
+## Colores
+
+Los temas usan una paleta categórica de ocho tonos con pasos propios para claro y
+oscuro, comprobada con un validador (banda de luminosidad, croma, separación para
+daltonismo y contraste). Los temas más allá del octavo se agrupan en «Otros» en las
+gráficas en lugar de repetir tonos. Elegir un color a mano libera el slot y manda el
+color elegido.
+
+El panel acepta `?theme=light` o `?theme=dark` para forzar el tema sin tocar la
+preferencia guardada.
 
 ## Licencia
 

@@ -1,5 +1,116 @@
 # Changelog — 90 Minutos
 
+## 2026-07-25 — v4.0.0
+
+### feat: de cronómetro de streaming a registro de tiempo por temas
+
+Reescritura del núcleo. La app pedía saber la duración *antes* de empezar y guardaba
+en JSON con Google Sheets de hecho como base de datos. Ahora eliges un tema, cuenta,
+y paras cuando quieras.
+
+**Dos modos**
+
+- **Abierto** — cuenta arriba en un tema hasta que paras.
+- **Sprint** — cuenta atrás con alarma (90 min por defecto). Al llegar al objetivo
+  guarda y para, o avisa y sigue en prórroga (configurable).
+
+Cambiar de tema cierra la sesión anterior y abre la nueva en un solo gesto.
+
+**El tiempo se calcula, no se decrementa**
+
+Una sesión guarda segmentos de trabajo (`segments`) y la duración es su suma.
+
+- **Corregido: el tiempo en pausa se contaba como trabajado.** `completeSession`
+  hacía `fin - inicio`, así que pausar 40 min para comer añadía 40 min a la sesión.
+- **Corregido: el contador derivaba y se perdía al suspender.** Restaba un segundo
+  por tick con `setInterval`; ahora todo sale de timestamps.
+- **Corregido: una sesión activa se perdía al reiniciar.** El estado vivía en
+  variables de memoria. Ahora la sesión activa *es* la fila con `ended_at IS NULL`.
+- **Nuevo: recuperación tras un corte brusco.** Se escribe `heartbeat_at` cada 15 s;
+  al arrancar, el segmento abierto se cierra en el último latido y la sesión queda en
+  pausa. Máximo 15 s perdidos, en vez de registrar las horas que el equipo pasó apagado.
+
+**SQLite en lugar de JSON + Sheets**
+
+- Un solo archivo en `~/.local/share/90minutos/90minutos.db`, fuera del repo:
+  ajustes, temas y sesiones. Mudarlo es copiar un archivo.
+- Usa el SQLite integrado en Node (>= 22): **cero dependencias nativas**, nada que
+  compilar al pasar a ARM.
+- **Corregido: 36 ids duplicados afectaban a 110 de 149 sesiones.** El import de
+  Sheets usaba el mediodía de la fecha como id, así que todas las sesiones de un
+  mismo día compartían id y `DELETE /api/sessions/:id` borraba el día entero.
+- **Eliminado `importFromSheets`**, que sobreescribía `sessions.json` completo y
+  perdía notas, URLs y horas reales.
+- Migración con `--dry-run`, copia de seguridad previa y verificación de que las
+  sesiones y las horas cuadran exactamente con el JSON original.
+
+**Temas en lugar de categorías de texto libre**
+
+- Tabla `topics` con color, archivado y fusión. 33 categorías escritas a mano se
+  unificaron en 32 temas (`B2.1 Inglés` + `Inglés B2.1` → un solo tema de 33 sesiones,
+  `Streaming ` con espacio final, `bitwig`, `Obisidan`).
+- Borrar un tema con historial devuelve `409` y propone archivar o fusionar.
+- **Corregido: `deleteTopic` nunca comprobaba si el tema tenía sesiones** (`getTopic`
+  no traía `session_count`), así que el borrado llegaba a estrellarse contra la clave
+  ajena con un error incomprensible.
+
+**Google fuera**
+
+Eliminados `server/google.js`, `scripts/open-auth.mjs`, OAuth, tokens y la
+dependencia `googleapis`. El export a CSV es local. Una pieza menos que reconfigurar
+al mudar el servidor.
+
+**Panel**
+
+- Rejilla de temas para arrancar con un clic, selector de modo y estado por color.
+- Control principal reorganizado en reloj, modo y rejilla de temas; las acciones
+  muestran solo lo que aplica y los detalles aprovechan todo el ancho disponible.
+- Campo «Tema nuevo» bajo Abierto/Sprint: crea el tema y empieza a contar con el
+  modo elegido en un solo gesto. La sección inferior queda para renombrar,
+  archivar, fusionar y recolorear.
+- Idioma y tipo de sesión desaparecen del panel por no aportar ya al flujo; se
+  conservan en importaciones y backups antiguos por compatibilidad.
+- El historial permite editar tema, fecha, duración, URL de vídeo y notas. Las
+  filas sin enlace muestran «Añadir URL» directamente.
+- Navegación separada en **Control** y **Estadísticas**, inspirada en la página
+  pública de Laboratorio 90: el trabajo diario ya no se mezcla con el análisis.
+- Resumen de progreso semanal, mensual y anual con barras y objetivo semanal
+  configurable; mes y año se derivan ×4 y ×52.
+- El tema claro se aplica antes de cargar el CSS, eliminando el destello oscuro
+  que aparecía al recargar la página.
+- Layout comprobado en escritorio, tablet y móvil.
+- Gráficas en SVG propio: se elimina Chart.js desde CDN, que rompía el panel sin red.
+- Paleta categórica de ocho tonos con pasos propios para claro y oscuro, verificada
+  con validador. **Corregido: los colores se repartían al azar entre 32 categorías,
+  así que los dos temas con más horas podían compartir tono.**
+- Los temas más allá del octavo se agrupan en «Otros» en vez de repetir colores.
+- `?theme=light|dark` para forzar el tema.
+
+**Red**
+
+- `HOST` y `AUTH_TOKEN` configurables. Si `HOST` no es loopback y falta el token,
+  el servidor **se niega a arrancar** en lugar de quedar abierto en la red.
+- El overlay y el panel deducen el host de la página, así que funcionan igual
+  servidos por Tailscale.
+- El panel y el overlay descubren `WS_PORT` desde `/api/health`; ya no pueden
+  conectarse por accidente a otra instancia que esté escuchando en `8765`.
+
+**Sin rutas fijas**
+
+`scripts/90minutos.sh` deduce el directorio de la app de su propia ubicación;
+`/mnt/SPEED/CODE/90Minutos` ya no está escrito a mano en el código.
+
+**Pruebas**
+
+`npm test` — 20 pruebas sobre la lógica de duración: exclusión de pausas,
+recuperación tras cortes, ciclo de vida, sprint, fusión y borrado de temas.
+
+**Eliminado**
+
+Pomodoro (lo cubre el modo sprint con duración configurable), templates de sesión
+(los sustituye la rejilla de temas + modos), y código muerto del panel: lista de
+tareas y controles de luces Govee cuyos elementos HTML ya no existían.
+
 ## 2026-02-12
 
 ### feat: dashboard v4 — Pomodoro, auto-luces, calendario, achievements, backup

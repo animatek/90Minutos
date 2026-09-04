@@ -1,8 +1,9 @@
+# Plantilla: scripts/install-desktop.sh sustituye @APP_DIR@ al instalarla.
 [Desktop Entry]
 Name=90 Minutos
 Comment=Timer 90min para sesiones de música
-Exec=/mnt/SPEED/CODE/90Minutos/scripts/90minutos.sh start
-Icon=/mnt/SPEED/CODE/90Minutos/icon/90.png
+Exec="@APP_DIR@/scripts/90minutos.sh" start
+Icon=@APP_DIR@/icon/90.png
 Terminal=false
 Type=Application
 Categories=Utility;AudioVideo;Music;
@@ -13,12 +14,12 @@ Actions=stop;restart;status;
 
 [Desktop Action stop]
 Name=Parar servidor
-Exec=/mnt/SPEED/CODE/90Minutos/scripts/90minutos.sh stop
+Exec="@APP_DIR@/scripts/90minutos.sh" stop
 
 [Desktop Action restart]
 Name=Reiniciar servidor
-Exec=/mnt/SPEED/CODE/90Minutos/scripts/90minutos.sh restart
+Exec="@APP_DIR@/scripts/90minutos.sh" restart
 
 [Desktop Action status]
 Name=Ver estado
-Exec=/mnt/SPEED/CODE/90Minutos/scripts/90minutos.sh status
+Exec="@APP_DIR@/scripts/90minutos.sh" status

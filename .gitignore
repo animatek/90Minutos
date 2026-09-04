@@ -15,7 +15,12 @@ coverage/
 *.env.local
 server/.env
 
-# Datos y tokens locales
+# Datos locales.
+# La base de datos vive fuera del repo (~/.local/share/90minutos/), pero se
+# ignoran también estos patrones por si alguien apunta DB_PATH aquí dentro.
+*.db
+*.db-wal
+*.db-shm
 server/data/
 sessions/
 *.ics

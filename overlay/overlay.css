@@ -32,6 +32,11 @@ body {
   opacity: 0.45;
 }
 
+/* Prórroga: el sprint llegó a su objetivo y sigue contando. */
+.widget.overtime .timer-label {
+  color: #ff9e64;
+}
+
 .cat-label {
   font-size: 15px;
   font-weight: 700;

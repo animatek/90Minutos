@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 :root {
+  color-scheme: dark;
   --bg-body: #1a1b26;
   --bg-card: #1f2335;
   --bg-element: #24283b;
@@ -16,7 +17,8 @@
   --placeholder-color: #6c7397;
 }
 
-body.light-mode {
+:root[data-theme="light"] {
+  color-scheme: light;
   --bg-body: #eceff4;
   --bg-card: #ffffff;
   --bg-element: #e5e9f0;

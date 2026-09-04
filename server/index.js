@@ -1,455 +1,378 @@
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { promises as fs } from 'fs';
 import { execFile } from 'child_process';
-import dotenv from 'dotenv';
-import { readJSON, writeJSON, paths } from './storage.js';
-import { beginAuth, handleCallback, createCalendarEvent, generateICS, hasGoogleAuth, appendToSheet, listSheetRows } from './google.js';
+import {
+  rootDir, dataDir, dbPath, pidFile, port, wsPort, host, authToken, iconPath,
+  isLoopback, assertNetworkConfig,
+} from './config.js';
+import {
+  db, getSettings, setSettings, DEFAULT_SETTINGS,
+  listTopics, getTopic, createTopic, updateTopic, deleteTopic, mergeTopics,
+  listSessions, getSession, updateSession, createManualSession, deleteSession, deleteSessions,
+  countSessions, statsByTopic, dailyTotals, todaySeconds, transaction,
+} from './db.js';
+import { timer } from './timer.js';
 
-dotenv.config();
+assertNetworkConfig();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const rootDir = path.join(__dirname, '..');
-const pidFile = path.join(rootDir, '.server.pid');
-
-// Write PID file for stop script
+await fs.mkdir(dataDir, { recursive: true });
 await fs.writeFile(pidFile, String(process.pid), 'utf-8');
 
-// Graceful shutdown
-function shutdown(signal) {
-  console.log(`\n[90Minutos] ${signal} recibido — apagando servidor…`);
-  if (tickTimer) clearInterval(tickTimer);
-  wss.close();
-  fs.unlink(pidFile).catch(() => { });
-  process.exit(0);
-}
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
-
-const defaultConfig = {
-  defaultDurationMin: 90,
-  categories: ["Octatrack", "Digitakt", "Oxi One", "Bitwig"],
-  categoryColors: {},
-  theme: "auto",
-  opacity: 0.85,
-  timezone: "Europe/Madrid",
-  languages: ["ES", "EN"],
-  defaultLanguage: "ES",
-  defaultSessionType: "privada"
-};
-
-async function ensureInitialFiles() {
-  await fs.mkdir(paths.dataDir, { recursive: true });
-  try { await fs.access(paths.sessionsFile); } catch { await writeJSON('sessions.json', []); }
-  try { await fs.access(paths.configFile); } catch { await writeJSON('config.json', defaultConfig); }
-  await fs.mkdir(paths.sessionsOutDir, { recursive: true });
-}
-await ensureInitialFiles();
-
-let state = 'idle';
-let cfg = await readJSON('config.json', defaultConfig);
-let durationSec = cfg.defaultDurationMin * 60;
-let remainingSec = durationSec;
-let startedAt = null;
-let category = cfg.categories?.[0] || 'General';
-let sessionName = category;
-let language = cfg.defaultLanguage || 'ES';
-let sessionType = cfg.defaultSessionType || 'privada';
-let sessionUrl = '';
-
-// Pomodoro
-let pomodoroEnabled = false;
-let pomodoroWorkMin = 25;
-let pomodoroBreakMin = 5;
-let pomodoroRounds = 4;
-let pomodoroCurrentRound = 0;
-let pomodoroPhase = 'work'; // 'work' | 'break'
-
-let tickTimer = null;
-
-function now() { return new Date(); }
-
-const clients = new Set();
-function broadcast(obj) { const raw = JSON.stringify(obj); for (const c of clients) { try { c.send(raw); } catch { } } }
-function pushState() {
-  broadcast({
-    type: 'state', payload: {
-      state, durationSec, remainingSec, category, sessionName, language, sessionType, sessionUrl,
-      startedAtISO: startedAt ? startedAt.toISOString() : null,
-      pomodoro: pomodoroEnabled ? { enabled: true, phase: pomodoroPhase, round: pomodoroCurrentRound, totalRounds: pomodoroRounds, workMin: pomodoroWorkMin, breakMin: pomodoroBreakMin } : { enabled: false }
-    }
-  });
-}
-
-const iconPath = path.join(rootDir, 'icon', '90.png');
 function notify(title, body) {
   execFile('notify-send', ['-i', iconPath, String(title), String(body)], () => { });
 }
 
-function startTimer() {
-  if (state === 'running') return;
-  const fresh = state === 'idle';
-  if (fresh) { remainingSec = durationSec; startedAt = now(); }
-  state = 'running';
-  if (tickTimer) clearInterval(tickTimer);
-  tickTimer = setInterval(() => {
-    remainingSec = Math.max(0, remainingSec - 1);
-    if (remainingSec <= 0) { clearInterval(tickTimer); tickTimer = null; completeSession(); }
-    pushState();
-  }, 1000);
-  pushState();
-  if (fresh) {
-    const min = Math.round(durationSec / 60);
-    notify('90 Minutos — Sesión iniciada', `${category} · ${min} min`);
-  }
-}
-function pauseTimer() { if (state !== 'running') return; state = 'paused'; if (tickTimer) { clearInterval(tickTimer); tickTimer = null; } pushState(); }
-function resumeTimer() {
-  if (state !== 'paused') return; state = 'running';
-  if (tickTimer) clearInterval(tickTimer);
-  tickTimer = setInterval(() => {
-    remainingSec = Math.max(0, remainingSec - 1);
-    if (remainingSec <= 0) { clearInterval(tickTimer); tickTimer = null; completeSession(); }
-    pushState();
-  }, 1000);
-  pushState();
-}
-function resetTimer() { state = 'idle'; if (tickTimer) { clearInterval(tickTimer); tickTimer = null; } remainingSec = durationSec; startedAt = null; pushState(); }
-function addSeconds(s) { const add = Number(s) || 0; remainingSec = Math.max(0, remainingSec + add); pushState(); }
-function setCategoryValue(cat) { if (!cat) return; category = String(cat); sessionName = category; pushState(); }
-function setSessionNameValue(name) { if (typeof name === 'undefined' || name === null) return; sessionName = String(name); pushState(); }
-function setLanguageValue(lang) { if (!lang) return; language = String(lang); pushState(); }
-function setSessionTypeValue(t) { if (!t) return; sessionType = String(t); pushState(); }
-function setSessionUrlValue(url) { sessionUrl = (url ?? '').toString(); pushState(); }
-function setDurationSeconds(sec) { const s = Math.max(1, Number(sec) || 5400); durationSec = s; if (state === 'idle') remainingSec = durationSec; pushState(); }
-
-async function appendCSV(session) {
-  const hdr = 'Categoria,DuracionMin,Lenguaje,Fecha,Sesion,DuracionHHMMSS\n';
-  const startDate = new Date(session.startISO);
-  const yyyy = startDate.getFullYear(); const mm = String(startDate.getMonth() + 1).padStart(2, '0'); const dd = String(startDate.getDate()).padStart(2, '0');
-  const fecha = `${yyyy}-${mm}-${dd}`;
-
-  const sec = session.durationSec || (session.durationMin * 60);
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
-  const hhmmss = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-
-  const csvLine = `"${(session.category || '').replace(/"/g, '""')}",` +
-    `"${session.durationMin || ''}",` +
-    `"${(session.language || '').replace(/"/g, '""')}",` +
-    `"${fecha}",` +
-    `"${(session.sessionType || '').replace(/"/g, '""')}",` +
-    `"${hhmmss}"\n`;
-  const outPath = path.join(paths.sessionsOutDir, 'sessions_log.csv');
-  try { await fs.access(outPath); } catch { await fs.writeFile(outPath, hdr, 'utf-8'); }
-  await fs.appendFile(outPath, csvLine, 'utf-8');
+function fmtDuration(sec) {
+  const total = Math.max(0, Math.round(sec));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+  if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`;
+  return `${s}s`;
 }
 
-async function completeSession() {
-  if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
-  const end = now();
-  const start = startedAt || end;
+// --- WebSocket ---------------------------------------------------------------
 
-  const totalSec = Math.max(1, Math.round((end - start) / 1000));
-  const durationMin = Math.round(totalSec / 60);
+const clients = new Set();
+function broadcast(obj) {
+  const raw = JSON.stringify(obj);
+  for (const c of clients) { try { c.send(raw); } catch { } }
+}
 
-  const session = {
-    id: Date.now(),
-    startISO: start.toISOString(), endISO: end.toISOString(),
-    durationMin, durationSec: totalSec,
-    category, language, sessionType, sessionName, url: sessionUrl
-  };
-  try {
-    if (await hasGoogleAuth()) { const id = await createCalendarEvent(session); session.calendarEventId = id; }
-    else { const icsPath = await generateICS(session); session.icsPath = icsPath; }
-  } catch (e) { const icsPath = await generateICS(session); session.icsPath = icsPath; }
-
-  const sessions = await readJSON('sessions.json', []); sessions.push(session); await writeJSON('sessions.json', sessions);
-
-  try { const sheetRow = await appendToSheet(session); if (typeof sheetRow === 'number') session.sheetRow = sheetRow; } catch (e) { await appendCSV(session); }
-
+timer.on('state', (payload) => broadcast({ type: 'state', payload }));
+timer.on('complete', (session) => {
   broadcast({ type: 'session:complete', payload: session });
-  notify('90 Minutos — Sesión completada', `${session.category} · ${session.durationMin} min`);
+  notify('90 Minutos — Sesión guardada', `${session.topic} · ${fmtDuration(session.durationSec)}`);
+});
+timer.on('started', ({ session }) => {
+  const target = session.mode === 'sprint' ? ` · objetivo ${fmtDuration(session.plannedSec)}` : ' · modo abierto';
+  notify('90 Minutos — Contando', `${session.topic}${target}`);
+});
+timer.on('sprint:end', (state) => {
+  broadcast({ type: 'alarm', payload: state });
+  notify('90 Minutos — Objetivo alcanzado', `${state.topic} · sigue contando en prórroga`);
+});
+timer.on('discarded', (session) => notify('90 Minutos — Sesión descartada', `${session.topic} · no se ha guardado`));
 
-  // Pomodoro: auto-transition
-  if (pomodoroEnabled) {
-    if (pomodoroPhase === 'work') {
-      pomodoroCurrentRound++;
-      if (pomodoroCurrentRound >= pomodoroRounds) {
-        // All rounds done
-        pomodoroPhase = 'work'; pomodoroCurrentRound = 0;
-        state = 'idle'; remainingSec = durationSec; startedAt = null; sessionUrl = '';
-        notify('Pomodoro completo', `${pomodoroRounds} rounds finalizados`);
-        pushState();
-      } else {
-        // Start break
-        pomodoroPhase = 'break';
-        durationSec = pomodoroBreakMin * 60;
-        remainingSec = durationSec; startedAt = now();
-        state = 'running';
-        tickTimer = setInterval(() => {
-          remainingSec = Math.max(0, remainingSec - 1);
-          if (remainingSec <= 0) { clearInterval(tickTimer); tickTimer = null; pomodoroBreakDone(); }
-          pushState();
-        }, 1000);
-        notify('Pomodoro — Descanso', `${pomodoroBreakMin} min de break (round ${pomodoroCurrentRound}/${pomodoroRounds})`);
-        pushState();
-      }
-    } else {
-      // Break just ended, handled by pomodoroBreakDone
-      pomodoroBreakDone();
-    }
-    return;
-  }
+// --- Servidor HTTP -----------------------------------------------------------
 
-  state = 'idle'; remainingSec = durationSec; startedAt = null; sessionUrl = ''; pushState();
-}
+const app = express();
+app.use(express.json({ limit: '10mb' }));
 
-function pomodoroBreakDone() {
-  if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
-  pomodoroPhase = 'work';
-  durationSec = pomodoroWorkMin * 60;
-  remainingSec = durationSec; startedAt = now();
-  state = 'running';
-  tickTimer = setInterval(() => {
-    remainingSec = Math.max(0, remainingSec - 1);
-    if (remainingSec <= 0) { clearInterval(tickTimer); tickTimer = null; completeSession(); }
-    pushState();
-  }, 1000);
-  notify('Pomodoro — A trabajar', `Round ${pomodoroCurrentRound + 1}/${pomodoroRounds}`);
-  pushState();
-}
-
-const port = process.env.PORT || 5173;
-const app = express(); app.use(express.json());
 const ALLOWED_ORIGINS = new Set([
-  'http://127.0.0.1:5173',
-  'http://localhost:5173',
-  `http://127.0.0.1:${port}`,
-  `http://localhost:${port}`,
+  `http://127.0.0.1:${port}`, `http://localhost:${port}`,
+  ...(isLoopback ? [] : [`http://${host}:${port}`]),
 ]);
 app.use((req, res, next) => {
-  const o = req.headers.origin || '';
-  if (ALLOWED_ORIGINS.has(o)) {
-    res.setHeader('Access-Control-Allow-Origin', o);
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-Confirm-Delete');
+  const origin = req.headers.origin || '';
+  if (ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,PUT,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-Confirm-Delete,X-Auth-Token');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 
+// Token solo cuando está configurado (en loopback no hace falta). El navegador no
+// puede poner cabeceras al cargar el dashboard, así que se acepta ?token= una vez
+// y se recuerda en una cookie.
+function readCookie(req, name) {
+  const raw = req.headers.cookie || '';
+  for (const part of raw.split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === name) return decodeURIComponent(v.join('='));
+  }
+  return null;
+}
+if (authToken) {
+  app.use((req, res, next) => {
+    const supplied = req.headers['x-auth-token'] || req.query.token || readCookie(req, 'token');
+    if (supplied === authToken) {
+      if (req.query.token) {
+        res.setHeader('Set-Cookie', `token=${encodeURIComponent(authToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`);
+      }
+      return next();
+    }
+    res.status(401).json({ error: 'Token inválido o ausente' });
+  });
+}
+
 app.use('/overlay', express.static(path.join(rootDir, 'overlay')));
 app.use('/dashboard', express.static(path.join(rootDir, 'dashboard')));
-app.use('/sessions', express.static(path.join(rootDir, 'sessions')));
 
-app.get('/api/config', async (req, res) => { const cfg = await readJSON('config.json', defaultConfig); res.json(cfg); });
-const CONFIG_ALLOWED_KEYS = ['defaultDurationMin', 'categories', 'categoryColors', 'theme', 'opacity', 'timezone', 'languages', 'defaultLanguage', 'defaultSessionType', 'templates'];
-app.post('/api/config', async (req, res) => {
-  const current = await readJSON('config.json', defaultConfig);
+const wrap = (fn) => async (req, res) => {
+  try { await fn(req, res); }
+  catch (e) { res.status(400).json({ error: String(e.message || e) }); }
+};
+
+// --- Ajustes -----------------------------------------------------------------
+
+app.get('/api/settings', (req, res) => res.json(getSettings()));
+app.post('/api/settings', wrap(async (req, res) => {
+  const saved = setSettings(req.body || {});
+  res.json(saved);
+  broadcast({ type: 'settings:update', payload: saved });
+  timer.emit('state', timer.snapshot());
+}));
+
+// --- Temas -------------------------------------------------------------------
+
+app.get('/api/topics', (req, res) => {
+  res.json(listTopics({ includeArchived: req.query.all === 'true' }));
+});
+app.post('/api/topics', wrap(async (req, res) => {
+  res.json(createTopic(req.body || {}));
+  broadcast({ type: 'topics:update' });
+}));
+app.patch('/api/topics/:id', wrap(async (req, res) => {
+  const topic = updateTopic(req.params.id, req.body || {});
+  if (!topic) return res.status(404).json({ error: 'Tema no encontrado' });
+  res.json(topic);
+  broadcast({ type: 'topics:update' });
+  timer.emit('state', timer.snapshot());
+}));
+app.delete('/api/topics/:id', wrap(async (req, res) => {
+  const result = deleteTopic(req.params.id);
+  if (!result.ok && result.reason === 'not_found') return res.status(404).json({ error: 'Tema no encontrado' });
+  if (!result.ok && result.reason === 'has_sessions') {
+    return res.status(409).json({
+      error: `El tema tiene ${result.sessionCount} sesiones. Archívalo o fusiónalo con otro para no perder historial.`,
+      sessionCount: result.sessionCount,
+    });
+  }
+  res.json(result);
+  broadcast({ type: 'topics:update' });
+}));
+app.post('/api/topics/:id/merge', wrap(async (req, res) => {
+  const result = mergeTopics(req.params.id, (req.body || {}).targetId);
+  res.json(result);
+  broadcast({ type: 'topics:update' });
+}));
+
+// --- Timer -------------------------------------------------------------------
+
+app.get('/api/state', (req, res) => res.json(timer.snapshot()));
+
+app.post('/api/timer/start', wrap(async (req, res) => {
   const body = req.body || {};
-  const filtered = {};
-  for (const k of CONFIG_ALLOWED_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(body, k)) filtered[k] = body[k];
+  // Aceptamos nombre de tema además de id: es lo cómodo desde el CLI.
+  let topicId = body.topicId;
+  if (!topicId && body.topic) {
+    const found = listTopics({ includeArchived: true }).find(t => t.name.toLowerCase() === String(body.topic).toLowerCase());
+    if (!found) throw new Error(`No existe el tema "${body.topic}"`);
+    topicId = found.id;
   }
-  const merged = { ...current, ...filtered };
-  await writeJSON('config.json', merged);
-  if (typeof merged.defaultDurationMin === 'number') { setDurationSeconds(Math.max(60, Math.round(merged.defaultDurationMin) * 60)); }
-  res.json(merged); broadcast({ type: 'config:update', payload: merged });
-});
-app.get('/api/sessions', async (req, res) => { const sessions = await readJSON('sessions.json', []); res.json(sessions); });
+  const plannedSec = body.plannedSec ?? (body.plannedMin ? Number(body.plannedMin) * 60 : undefined);
+  const { session, previous } = timer.start({ ...body, topicId, plannedSec });
+  res.json({ ok: true, session, previous, state: timer.snapshot() });
+}));
+app.post('/api/timer/pause', wrap(async (req, res) => res.json({ ok: true, state: timer.pause() })));
+app.post('/api/timer/resume', wrap(async (req, res) => res.json({ ok: true, state: timer.resume() })));
+app.post('/api/timer/stop', wrap(async (req, res) => {
+  const session = timer.stop();
+  res.json({ ok: true, session, state: timer.snapshot() });
+}));
+app.post('/api/timer/discard', wrap(async (req, res) => {
+  const session = timer.discard();
+  res.json({ ok: true, session, state: timer.snapshot() });
+}));
+app.post('/api/timer/extend', wrap(async (req, res) => {
+  const body = req.body || {};
+  const sec = body.sec ?? (body.min ? Number(body.min) * 60 : 0);
+  res.json({ ok: true, state: timer.extend(sec) });
+}));
+app.post('/api/timer/mode', wrap(async (req, res) => {
+  const body = req.body || {};
+  const plannedSec = body.plannedSec ?? (body.plannedMin ? Number(body.plannedMin) * 60 : undefined);
+  res.json({ ok: true, state: timer.setMode(body.mode, plannedSec) });
+}));
+app.post('/api/timer/meta', wrap(async (req, res) => res.json({ ok: true, state: timer.setMeta(req.body || {}) })));
 
-app.delete('/api/sessions', async (req, res) => {
+// --- Sesiones ----------------------------------------------------------------
+
+app.get('/api/sessions', (req, res) => {
+  const { from, to, topicId, limit, offset } = req.query;
+  res.json(listSessions({ from, to, topicId, limit, offset }));
+});
+app.post('/api/sessions', wrap(async (req, res) => res.json(createManualSession(req.body || {}))));
+app.patch('/api/sessions/:id', wrap(async (req, res) => {
+  const session = updateSession(req.params.id, req.body || {});
+  if (!session) return res.status(404).json({ error: 'Sesión no encontrada' });
+  res.json(session);
+}));
+app.delete('/api/sessions/:id', wrap(async (req, res) => {
+  res.json({ ok: true, removed: deleteSession(req.params.id) });
+}));
+app.post('/api/sessions/bulk-delete', wrap(async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  res.json({ ok: true, removed: ids.length ? deleteSessions(ids) : 0 });
+}));
+app.delete('/api/sessions', wrap(async (req, res) => {
   if (req.headers['x-confirm-delete'] !== 'true') {
-    return res.status(400).json({ error: 'Requiere header X-Confirm-Delete: true' });
+    return res.status(400).json({ error: 'Requiere cabecera X-Confirm-Delete: true' });
   }
-  await writeJSON('sessions.json', []);
-  res.json({ ok: true });
-});
-app.delete('/api/sessions/:id', async (req, res) => {
-  const id = Number(req.params.id);
-  let sessions = await readJSON('sessions.json', []);
-  const before = sessions.length;
-  sessions = sessions.filter(s => Number(s.id) !== id);
-  await writeJSON('sessions.json', sessions);
-  res.json({ ok: true, removed: before - sessions.length });
-});
+  const removed = db.prepare(`DELETE FROM sessions`).run().changes;
+  res.json({ ok: true, removed });
+}));
 
+// --- Estadísticas ------------------------------------------------------------
 
-app.put('/api/sessions/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    let sessions = await readJSON('sessions.json', []);
-    const i = sessions.findIndex(s => Number(s.id) === id);
-    if (i === -1) { res.status(404).json({ error: 'not found' }); return; }
-    const allowed = ['url', 'sessionName', 'category', 'language', 'sessionType', 'durationMin', 'durationSec', 'startISO', 'endISO', 'notes'];
-    const body = req.body || {};
-    const update = {};
-    for (const k of allowed) { if (Object.prototype.hasOwnProperty.call(body, k)) update[k] = body[k]; }
-    sessions[i] = { ...sessions[i], ...update };
-    await writeJSON('sessions.json', sessions);
-    res.json(sessions[i]);
-  } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
-  }
-});
-app.post('/api/sessions/bulk-delete', async (req, res) => {
-  try {
-    const ids = req.body && Array.isArray(req.body.ids) ? req.body.ids.map(Number) : [];
-    if (!ids.length) return res.json({ ok: true, removed: 0 });
-    let sessions = await readJSON('sessions.json', []);
-    const idSet = new Set(ids);
-    const before = sessions.length;
-    sessions = sessions.filter(s => !idSet.has(Number(s.id)));
-    await writeJSON('sessions.json', sessions);
-    res.json({ ok: true, removed: before - sessions.length });
-  } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
-  }
-});
-
-// Duplicate session
-app.post('/api/sessions', async (req, res) => {
-  try {
-    const body = req.body || {};
-    const allowed = ['url', 'sessionName', 'category', 'language', 'sessionType', 'durationMin', 'durationSec', 'startISO', 'endISO', 'notes'];
-    const session = { id: Date.now() };
-    for (const k of allowed) { if (Object.prototype.hasOwnProperty.call(body, k)) session[k] = body[k]; }
-    if (!session.startISO) session.startISO = new Date().toISOString();
-    if (!session.endISO) {
-      const dur = (session.durationSec || (session.durationMin || 0) * 60) * 1000;
-      session.endISO = new Date(new Date(session.startISO).getTime() + dur).toISOString();
-    }
-    const sessions = await readJSON('sessions.json', []);
-    sessions.push(session);
-    await writeJSON('sessions.json', sessions);
-    res.json(session);
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
-});
-
-// Backup & Restore
-app.get('/api/backup', async (req, res) => {
-  const config = await readJSON('config.json', defaultConfig);
-  const sessions = await readJSON('sessions.json', []);
-  res.json({ version: 1, exportedAt: new Date().toISOString(), config, sessions });
-});
-app.post('/api/restore', async (req, res) => {
-  try {
-    const { config, sessions } = req.body || {};
-    if (!config || !Array.isArray(sessions)) return res.status(400).json({ error: 'Formato de backup invalido' });
-    const filtered = {};
-    for (const k of CONFIG_ALLOWED_KEYS) { if (Object.prototype.hasOwnProperty.call(config, k)) filtered[k] = config[k]; }
-    const current = await readJSON('config.json', defaultConfig);
-    await writeJSON('config.json', { ...current, ...filtered });
-    await writeJSON('sessions.json', sessions);
-    res.json({ ok: true, sessions: sessions.length });
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
-});
-
-app.get('/api/stats', async (req, res) => {
-  const sessions = await readJSON('sessions.json', []);
-  const byCatMin = {};
-  for (const s of sessions) {
-    const min = (s.durationSec ? s.durationSec / 60 : s.durationMin || 0);
-    byCatMin[s.category] = (byCatMin[s.category] || 0) + min;
-  }
-  const totalHours = Object.fromEntries(Object.entries(byCatMin).map(([k, v]) => [k, +(v / 60).toFixed(2)]));
-  res.json({ totalsMin: byCatMin, totalsHours: totalHours, count: sessions.length });
-});
-app.get('/api/state', (req, res) => { res.json({ state, durationSec, remainingSec, category, sessionName, language, sessionType, sessionUrl, startedAtISO: startedAt ? startedAt.toISOString() : null, pomodoro: pomodoroEnabled ? { enabled: true, phase: pomodoroPhase, round: pomodoroCurrentRound, totalRounds: pomodoroRounds, workMin: pomodoroWorkMin, breakMin: pomodoroBreakMin } : { enabled: false } }); });
-
-app.get('/api/health', (req, res) => {
-  const uptimeSec = Math.floor(process.uptime());
-  const h = Math.floor(uptimeSec / 3600);
-  const m = Math.floor((uptimeSec % 3600) / 60);
-  const uptime = h > 0 ? `${h}h ${m}m` : `${m}m`;
-  const remaining = (() => {
-    const rm = Math.floor(remainingSec / 60);
-    const rs = remainingSec % 60;
-    return `${rm}m ${String(rs).padStart(2, '0')}s`;
-  })();
+app.get('/api/stats', (req, res) => {
+  const { from, to } = req.query;
   res.json({
-    ok: true, pid: process.pid, uptime,
-    timer: { state, remaining, category, sessionName },
-    wsClients: clients.size
+    byTopic: statsByTopic({ from, to }),
+    daily: dailyTotals({ from, to }),
+    todaySec: todaySeconds(),
+    count: countSessions(),
   });
 });
 
-// Google & Sheets
-app.get('/api/google/auth', beginAuth);
-app.get('/api/google/callback', handleCallback);
-app.get('/api/sheet/id', (req, res) => {
-  const id = process.env.SHEET_ID || process.env.GOOGLE_SHEETS_ID || null;
-  res.json({ sheetId: id });
+app.get('/api/export.csv', (req, res) => {
+  const { from, to, topicId } = req.query;
+  const rows = listSessions({ from, to, topicId, includeActive: false });
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const header = 'Tema,Inicio,Fin,DuracionMin,DuracionHHMMSS,Modo,Idioma,Tipo,URL,Notas';
+  const body = rows.map(s => {
+    const sec = s.durationSec;
+    const hhmmss = [Math.floor(sec / 3600), Math.floor((sec % 3600) / 60), sec % 60]
+      .map(n => String(n).padStart(2, '0')).join(':');
+    return [
+      esc(s.topic), esc(s.startISO), esc(s.endISO), s.durationMin.toFixed(2), hhmmss,
+      esc(s.mode), esc(s.language), esc(s.sessionType), esc(s.url), esc(s.notes),
+    ].join(',');
+  });
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="90minutos_${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send([header, ...body].join('\n'));
 });
-app.post('/api/sessions/importFromSheets', async (req, res) => {
-  // Reconstruye sessions.json a partir de las filas del Sheet
-  try {
-    const rows = await listSheetRows(); // [{categoria,duracion,lenguaje,fecha,sesion}]
-    const sessions = [];
-    for (const r of rows) {
-      if (!r.fecha) continue; // saltar filas vacías
-      // fecha en YYYY-MM-DD
-      const startLocal = new Date(r.fecha + 'T12:00:00'); // medio día local
-      if (isNaN(startLocal.getTime())) continue; // saltar fechas inválidas
-      const endLocal = new Date(startLocal.getTime() + (r.duracion || 0) * 60 * 1000);
-      sessions.push({
-        id: startLocal.getTime(),
-        startISO: startLocal.toISOString(),
-        endISO: endLocal.toISOString(),
-        durationMin: Math.round((r.duracion || 0)),
-        durationSec: (r.duracion || 0) * 60,
-        category: r.categoria || '',
-        language: r.lenguaje || '',
-        sessionType: r.sesion || '',
-        sessionName: r.categoria || '',
-        url: r.url || ''
-      });
-    }
-    await writeJSON('sessions.json', sessions);
-    res.json({ ok: true, imported: sessions.length });
-  } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
+
+// --- Backup / Restore --------------------------------------------------------
+
+app.get('/api/backup', (req, res) => {
+  res.json({
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    settings: getSettings(),
+    topics: listTopics({ includeArchived: true }),
+    sessions: listSessions({ includeActive: false }),
+  });
+});
+
+app.post('/api/restore', wrap(async (req, res) => {
+  const { settings, topics, sessions, version } = req.body || {};
+  if (!Array.isArray(sessions) || !Array.isArray(topics)) {
+    return res.status(400).json({ error: 'Formato de backup inválido (se esperan topics y sessions)' });
   }
+  if (Number(version) !== 2) {
+    return res.status(400).json({ error: `Backup versión ${version}: usa migrate/json-to-sqlite.mjs para formatos antiguos` });
+  }
+
+  let restored = 0;
+  transaction(() => {
+    db.prepare(`DELETE FROM sessions`).run();
+    db.prepare(`DELETE FROM topics`).run();
+
+    const byName = new Map();
+    for (const t of topics) {
+      const info = db.prepare(`INSERT INTO topics (name, color, archived, sort_order, created_at) VALUES (?, ?, ?, ?, ?)`)
+        .run(t.name, t.color || null, t.archived ? 1 : 0, Number(t.sortOrder) || 0, new Date().toISOString());
+      byName.set(t.name, info.lastInsertRowid);
+    }
+    const insertSession = db.prepare(`
+      INSERT INTO sessions (topic_id, mode, planned_sec, started_at, ended_at, heartbeat_at,
+                            notes, url, language, session_type, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const insertSegment = db.prepare(`INSERT INTO segments (session_id, started_at, ended_at) VALUES (?, ?, ?)`);
+    for (const s of sessions) {
+      const topicId = byName.get(s.topic);
+      if (!topicId) continue;
+      const end = s.endISO || new Date(new Date(s.startISO).getTime() + (s.durationSec || 0) * 1000).toISOString();
+      const id = insertSession.run(
+        topicId, s.mode === 'sprint' ? 'sprint' : 'open', s.plannedSec ?? null,
+        s.startISO, end, end, s.notes || null, s.url || null, s.language || null,
+        s.sessionType || null, ['timer', 'import', 'manual'].includes(s.source) ? s.source : 'manual',
+      ).lastInsertRowid;
+      insertSegment.run(id, s.startISO, end);
+      restored++;
+    }
+  });
+  if (settings) setSettings(settings);
+  res.json({ ok: true, sessions: restored, topics: topics.length });
+  broadcast({ type: 'topics:update' });
+}));
+
+// --- Salud -------------------------------------------------------------------
+
+app.get('/api/health', (req, res) => {
+  const state = timer.snapshot();
+  res.json({
+    ok: true,
+    pid: process.pid,
+    uptime: fmtDuration(process.uptime()),
+    db: dbPath,
+    sessions: countSessions(),
+    wsClients: clients.size,
+    wsPort,
+    timer: {
+      state: state.state,
+      mode: state.mode,
+      topic: state.topic,
+      elapsed: fmtDuration(state.elapsedSec),
+      remaining: state.remainingSec == null ? null : fmtDuration(state.remainingSec),
+      today: fmtDuration(state.todaySec),
+    },
+  });
 });
 
 app.get('/', (req, res) => res.redirect('/dashboard/index.html'));
 
-app.listen(port, '127.0.0.1', () => console.log(`[Animatek Timer] HTTP en http://127.0.0.1:${port}`));
+// --- Arranque ----------------------------------------------------------------
 
-const wss = new WebSocketServer({ port: 8765, host: '127.0.0.1' });
-wss.on('connection', (ws) => {
-  clients.add(ws); pushState();
-  ws.on('message', (raw) => {
-    try {
-      const msg = JSON.parse(raw.toString());
-      if (msg && msg.type === 'command') {
-        const a = msg.action; const p = msg.payload;
-        switch (a) {
-          case 'start': startTimer(); break;
-          case 'pause': pauseTimer(); break;
-          case 'resume': resumeTimer(); break;
-          case 'reset': resetTimer(); break;
-          case 'finish': if (state !== 'idle') completeSession(); break;
-          case 'add': addSeconds(p || 0); break;
-          case 'setCategory': setCategoryValue(p); break;
-          case 'setSessionName': setSessionNameValue(p); break;
-          case 'setDurationSec': setDurationSeconds(p); break;
-          case 'setLanguage': setLanguageValue(p); break;
-          case 'setSessionType': setSessionTypeValue(p); break;
-          case 'setSessionUrl': setSessionUrlValue(p); break;
-          case 'setPomodoroEnabled': pomodoroEnabled = !!p; if (!pomodoroEnabled) { pomodoroPhase = 'work'; pomodoroCurrentRound = 0; } pushState(); break;
-          case 'setPomodoroWork': pomodoroWorkMin = Math.max(1, Number(p) || 25); pushState(); break;
-          case 'setPomodoroBreak': pomodoroBreakMin = Math.max(1, Number(p) || 5); pushState(); break;
-          case 'setPomodoroRounds': pomodoroRounds = Math.max(1, Number(p) || 4); pushState(); break;
-        }
-      }
-    } catch { }
-  });
-  ws.on('close', () => clients.delete(ws));
+const httpServer = app.listen(port, host, () => {
+  console.log(`[90Minutos] HTTP    http://${host}:${port}`);
+  console.log(`[90Minutos] Datos   ${dbPath}`);
+  if (!isLoopback) console.log('[90Minutos] Accesible en la red — protegido con AUTH_TOKEN');
 });
 
+const wss = new WebSocketServer({ port: wsPort, host });
+wss.on('connection', (ws, req) => {
+  if (authToken) {
+    const url = new URL(req.url || '/', `http://${host}`);
+    const supplied = url.searchParams.get('token') || readCookie(req, 'token');
+    if (supplied !== authToken) { ws.close(4401, 'Token inválido'); return; }
+  }
+  clients.add(ws);
+  ws.send(JSON.stringify({ type: 'state', payload: timer.snapshot() }));
+  ws.on('close', () => clients.delete(ws));
+  ws.on('error', () => clients.delete(ws));
+});
+
+// Al arrancar, cerrar lo que quedó a medias por un corte y retomar lo que seguía vivo.
+const recovered = timer.recover();
+if (recovered?.interrupted) {
+  const s = recovered.session;
+  console.log(`[90Minutos] Recuperada sesión interrumpida: ${s.topic} · ${fmtDuration(s.durationSec)} (en pausa)`);
+  notify('90 Minutos — Sesión recuperada', `${s.topic} · ${fmtDuration(s.durationSec)} · en pausa`);
+}
+timer.resumeTickingIfRunning();
+
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n[90Minutos] ${signal} — apagando…`);
+  timer.shutdown();
+  wss.close();
+  httpServer.close();
+  fs.unlink(pidFile).catch(() => { });
+  try { db.close(); } catch { }
+  setTimeout(() => process.exit(0), 150);
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

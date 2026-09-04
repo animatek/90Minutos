@@ -4,41 +4,179 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Animatek Timer — Panel</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <title>90 Minutos — Panel</title>
+  <script>
+    // Se ejecuta antes del CSS para que la primera pintura use ya el tema
+    // guardado. Si se hiciera al final del body, el oscuro parpadearía al cargar.
+    (() => {
+      const forced = new URLSearchParams(location.search).get('theme');
+      let saved = null;
+      try { saved = localStorage.getItem('animatek-theme'); } catch { /* almacenamiento bloqueado */ }
+      const light = forced ? forced === 'light' : saved === 'light';
+      document.documentElement.dataset.theme = light ? 'light' : 'dark';
+    })();
+  </script>
   <link rel="stylesheet" href="dashboard.css" />
+  <link rel="stylesheet" href="panel.css" />
 </head>
 
 <body>
   <header>
-    <h1>Animatek Timer — Panel</h1>
+    <h1>90 Minutos</h1>
     <nav>
       <a href="/overlay/index.html" target="_blank">Overlay</a>
-      <a href="https://animatek.net/90-minutos/" target="_blank" rel="noopener">Laboratorio 90</a>
-      <a id="openSheet" href="#" target="_blank">Base de datos</a>
+      <a href="/api/export.csv">CSV</a>
       <span id="wsStatus" class="ws-indicator ws-off" title="Desconectado">●</span>
       <button id="themeToggle" title="Cambiar tema">🌙</button>
-      <button id="btnAuth">Conectar Google</button>
     </nav>
   </header>
 
+  <nav class="view-tabs" role="tablist" aria-label="Sección del panel">
+    <button id="viewControl" class="view-tab" role="tab" aria-selected="true"
+      data-view-target="control">Control</button>
+    <button id="viewStats" class="view-tab" role="tab" aria-selected="false"
+      data-view-target="stats">Estadísticas</button>
+  </nav>
 
-  <section class="kpi-grid">
+  <!-- ── Control: el gesto principal ─────────────────────────────────────── -->
+  <section class="card control-card" data-view="control">
+    <div class="control-heading">
+      <div>
+        <span class="section-label">Control de sesión</span>
+        <h2>¿En qué vas a trabajar?</h2>
+      </div>
+      <p class="control-hint">Elige un modo y pulsa un tema para empezar a contar.</p>
+    </div>
+
+    <div class="control-workspace">
+      <div class="session-console">
+        <div class="rc-timer" id="rcTimer" data-state="idle" aria-live="polite">
+          <div class="rc-timer-main">
+            <span class="rc-timer-value" id="rcTimerValue">00:00</span>
+            <span class="rc-timer-badge" id="rcTimerMode">Abierto</span>
+          </div>
+          <div class="rc-timer-meta" id="rcTimerState">En espera</div>
+          <div class="rc-progress-track" id="rcProgressTrack" hidden>
+            <div class="rc-progress-bar" id="rcTimerProgress"></div>
+          </div>
+          <div class="rc-timer-today">Hoy <strong id="rcToday">0m</strong></div>
+        </div>
+
+        <div class="mode-picker">
+          <span class="section-label">Modo de trabajo</span>
+          <div class="mode-switch" role="group" aria-label="Modo de sesión">
+            <button id="modeOpen" class="mode-btn" aria-pressed="true">
+              <strong>Abierto</strong>
+              <span>cuenta hasta que pares</span>
+            </button>
+            <button id="modeSprint" class="mode-btn" aria-pressed="false">
+              <strong>Sprint <span id="modeSprintMin">90</span>′</strong>
+              <span>cuenta atrás con alarma</span>
+            </button>
+          </div>
+        </div>
+
+        <form class="quick-topic" id="quickTopicForm">
+          <label class="section-label" for="quickTopicName">Tema nuevo</label>
+          <div class="quick-topic-card">
+            <span class="quick-topic-plus" aria-hidden="true">＋</span>
+            <input id="quickTopicName" type="text" autocomplete="off"
+              placeholder="Organización semana…" />
+            <button class="btn-primary" type="submit">Crear y empezar</button>
+          </div>
+          <span class="quick-topic-hint">Se guardará en Temas y usará el modo <strong id="quickTopicMode">abierto</strong>.</span>
+        </form>
+
+        <div class="rc-actions" id="rcActions" hidden>
+          <button id="rcPause" class="btn-secondary">⏸ Pausar</button>
+          <button id="rcResume" class="btn-secondary">▶ Reanudar</button>
+          <button id="rcStop" class="btn-primary">⏹ Parar y guardar</button>
+          <button id="rcExtend" class="btn-secondary">+10 min</button>
+          <button id="rcDiscard" class="btn-danger-text">Descartar</button>
+        </div>
+      </div>
+
+      <div class="topic-launcher">
+        <div class="topic-launcher-head">
+          <div>
+            <span class="section-label">Temas</span>
+            <h3>Empieza a contar en…</h3>
+          </div>
+          <input id="topicSearch" class="search-input topic-search" type="search"
+            placeholder="Buscar tema" aria-label="Buscar tema" />
+        </div>
+        <div class="topic-grid" id="topicGrid"></div>
+      </div>
+    </div>
+
+    <div class="rc-compact-controls">
+      <div class="session-meta-heading">
+        <span class="section-label">Detalles de la sesión</span>
+        <span>Se guardan mientras trabajas</span>
+      </div>
+      <label class="rc-compact-group rc-compact-grow">
+        <span class="rc-compact-label">URL del vídeo</span>
+        <input id="rcUrl" class="compact-input" type="url" placeholder="https://youtube.com/…" />
+      </label>
+      <label class="rc-compact-group rc-compact-grow">
+        <span class="rc-compact-label">Notas</span>
+        <input id="rcNotes" class="compact-input" type="text" placeholder="Qué estás haciendo" />
+      </label>
+    </div>
+  </section>
+
+  <!-- ── Resumen de progreso ─────────────────────────────────────────────── -->
+  <section class="card stats-overview" data-view="stats" hidden>
+    <div class="stats-overview-head">
+      <div>
+        <span class="section-label">Estadísticas</span>
+        <h2>Sesiones y progreso</h2>
+        <p>Una vista separada para analizar el tiempo sin mezclarlo con el control diario.</p>
+      </div>
+      <div class="goal-badge">Objetivo semanal <strong id="goalWeeklyBadge">15 h</strong></div>
+    </div>
+    <div class="goal-progress-list">
+      <div class="goal-progress-row" id="goalWeekRow">
+        <div class="goal-progress-label">
+          <strong>Semana actual</strong>
+          <span><b id="goalWeekCurrent">0 h</b> / <span id="goalWeekTarget">15 h</span></span>
+        </div>
+        <div class="goal-progress-track"><div id="goalWeekBar"></div></div>
+      </div>
+      <div class="goal-progress-row" id="goalMonthRow">
+        <div class="goal-progress-label">
+          <strong>Mes actual</strong>
+          <span><b id="goalMonthCurrent">0 h</b> / <span id="goalMonthTarget">60 h</span></span>
+        </div>
+        <div class="goal-progress-track"><div id="goalMonthBar"></div></div>
+      </div>
+      <div class="goal-progress-row" id="goalYearRow">
+        <div class="goal-progress-label">
+          <strong>Año en curso</strong>
+          <span><b id="goalYearCurrent">0 h</b> / <span id="goalYearTarget">780 h</span></span>
+        </div>
+        <div class="goal-progress-track"><div id="goalYearBar"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Indicadores ─────────────────────────────────────────────────────── -->
+  <section class="kpi-grid" data-view="stats" hidden>
     <div class="kpi-card">
       <span class="kpi-value" id="kpiTotalHours">0</span>
       <span class="kpi-label">Horas totales</span>
     </div>
     <div class="kpi-card">
-      <span class="kpi-value" id="kpiWeekSessions">0</span>
-      <span class="kpi-label">Sesiones esta semana</span>
+      <span class="kpi-value" id="kpiWeekHours">0</span>
+      <span class="kpi-label">Horas esta semana</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-value" id="kpiSessions">0</span>
+      <span class="kpi-label">Sesiones registradas</span>
     </div>
     <div class="kpi-card">
       <span class="kpi-value" id="kpiAvgDuration">0</span>
       <span class="kpi-label">Duración media (min)</span>
-    </div>
-    <div class="kpi-card">
-      <span class="kpi-value" id="kpiBestDay">—</span>
-      <span class="kpi-label">Día más productivo</span>
     </div>
     <div class="kpi-card kpi-card-wide">
       <span class="kpi-label" style="margin-bottom:4px">Esta semana vs anterior</span>
@@ -57,89 +195,47 @@
     </div>
   </section>
 
-  <section class="control-grid">
-    <div class="card control-card">
-      <h2>Control remoto</h2>
-      <div class="rc-timer" aria-live="polite">
-        <div class="rc-timer-value" id="rcTimerValue">00:00</div>
-        <div class="rc-timer-meta">
-          <span id="rcTimerState">En espera — Sin categoría</span>
-          <span id="rcTimerElapsed">Transcurrido 00:00 / 00:00</span>
-        </div>
-        <div class="rc-progress-track">
-          <div class="rc-progress-bar" id="rcTimerProgress"></div>
+  <!-- ── Gráficas ────────────────────────────────────────────────────────── -->
+  <section class="charts-container viz-root" data-view="stats" hidden>
+    <div class="card chart-wrapper">
+      <div class="chart-head">
+        <h2>Horas por tema</h2>
+        <div class="chart-range" role="group" aria-label="Rango de fechas">
+          <button class="range-btn" data-range="30">30 d</button>
+          <button class="range-btn" data-range="90">90 d</button>
+          <button class="range-btn is-active" data-range="all">Todo</button>
         </div>
       </div>
-      <div class="pomodoro-bar" id="pomodoroBar">
-        <label class="pomodoro-toggle">
-          <input type="checkbox" id="pomodoroEnabled"> Pomodoro
-        </label>
-        <div class="pomodoro-controls" id="pomodoroControls" style="display:none">
-          <div class="pomodoro-field">
-            <span>Trabajo</span>
-            <input type="number" id="pomodoroWork" min="1" max="120" value="25" class="pomodoro-input"> min
-          </div>
-          <div class="pomodoro-field">
-            <span>Descanso</span>
-            <input type="number" id="pomodoroBreak" min="1" max="60" value="5" class="pomodoro-input"> min
-          </div>
-          <div class="pomodoro-field">
-            <span>Rounds</span>
-            <input type="number" id="pomodoroRounds" min="1" max="20" value="4" class="pomodoro-input">
-          </div>
-          <span id="pomodoroStatus" class="pomodoro-status"></span>
+      <div class="chart-svg" id="chartTopics"></div>
+      <details class="chart-table">
+        <summary>Ver como tabla</summary>
+        <div class="table-responsive">
+          <table class="modern-table" id="topicsTable">
+            <thead>
+              <tr>
+                <th>Tema</th>
+                <th>Horas</th>
+                <th>Sesiones</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
         </div>
+      </details>
+    </div>
+
+    <div class="card chart-wrapper">
+      <div class="chart-head">
+        <h2>Últimos 14 días</h2>
       </div>
-      <div class="template-quickstart" id="templateQuickstart"></div>
-      <div class="row rc-actions">
-        <button id="rcStart">Start</button>
-        <button id="rcPause">Pause</button>
-        <button id="rcResume">Resume</button>
-        <button id="rcReset">Reset</button>
-        <button id="rcFinish" title="Guardar sesión ahora">Finalizar sesión</button>
-        <select id="rcCategory" title="Categoría" style="min-width:180px"></select>
-        <select id="rcSessionType" title="Sesión">
-          <option value="privada">Privada</option>
-          <option value="publica">Pública</option>
-        </select>
-        <div class="rc-inline-group">
-          <input id="rcUrl" class="control-input" type="url" placeholder="URL de la sesión" />
-          <div class="rc-compact-controls">
-            <div class="rc-compact-group">
-              <span class="rc-compact-label">Duración</span>
-              <div class="compact-slider">
-                <input type="range" id="cfgDuration" class="styled-slider compact-slider-input" min="5" max="240" step="5"
-                  value="90" />
-                <span id="durationVal" class="badge-value compact-badge">90 min</span>
-              </div>
-            </div>
-            <div class="rc-compact-group">
-              <span class="rc-compact-label">Opacidad</span>
-              <div class="compact-slider">
-                <input type="range" id="cfgOpacity" class="styled-slider compact-slider-input" min="0.1" max="1" step="0.05" />
-                <span id="opacityVal" class="badge-value compact-badge">0.85</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <div class="chart-svg" id="chartDays"></div>
     </div>
   </section>
 
-  <section class="activity-row">
-    <div class="card calendar-card">
-      <div class="calendar-header">
-        <button id="calPrev" class="btn-icon">◀</button>
-        <h2 id="calTitle">—</h2>
-        <button id="calNext" class="btn-icon">▶</button>
-      </div>
-      <div class="calendar-grid" id="calendarGrid"></div>
-    </div>
-    <div class="card heatmap-card">
+  <!-- ── Actividad ───────────────────────────────────────────────────────── -->
+  <section class="card heatmap-card" data-view="stats" hidden>
+    <div class="chart-head">
       <h2>Actividad</h2>
-      <div class="heatmap-container">
-        <div class="heatmap-grid" id="heatmapGrid"></div>
-      </div>
       <div class="heatmap-legend">
         <span class="heatmap-legend-label">Menos</span>
         <div class="heatmap-legend-cell heatmap-cell"></div>
@@ -150,110 +246,61 @@
         <span class="heatmap-legend-label">Más</span>
       </div>
     </div>
-  </section>
-
-  <section class="card stats-card">
-    <div class="charts-container">
-      <div class="chart-wrapper">
-        <h3>Distribución (Horas)</h3>
-        <canvas id="chartDonut"></canvas>
-      </div>
-      <div class="chart-wrapper">
-        <h3>Últimos 7 Días</h3>
-        <canvas id="chartBar"></canvas>
-      </div>
-      <div class="panel-card config-card stats-config">
-        <div class="config-body">
-          <div class="config-section">
-            <div class="add-category-bar">
-              <input id="newCat" class="modern-input compact-input" placeholder="Categoría" />
-              <button id="addCat" class="btn-secondary">Añadir</button>
-              <button id="saveCfg" class="btn-primary">Save</button>
-            </div>
-            <div id="catList" class="categories-grid"></div>
-          </div>
-          <div class="config-section template-section">
-            <h3>Templates</h3>
-            <div class="add-category-bar">
-              <input id="newTemplateName" class="modern-input compact-input" placeholder="Nombre template" />
-              <button id="addTemplate" class="btn-secondary">+ Template</button>
-            </div>
-            <div id="templateList" class="template-list"></div>
-          </div>
-        </div>
-      </div>
+    <div class="heatmap-container">
+      <div class="heatmap-grid" id="heatmapGrid"></div>
     </div>
   </section>
 
-  <section class="card sessions-card">
+  <section class="card calendar-card" data-view="stats" hidden>
+    <div class="calendar-header">
+      <button id="calPrev" class="btn-icon">‹</button>
+      <h2 id="calTitle">—</h2>
+      <button id="calNext" class="btn-icon">›</button>
+    </div>
+    <div class="calendar-grid" id="calendarGrid"></div>
+  </section>
+
+  <!-- ── Historial ───────────────────────────────────────────────────────── -->
+  <section class="card" data-view="control">
     <div class="sessions-header">
-      <h2>Historial de Sesiones</h2>
+      <h2>Historial</h2>
       <div class="sessions-actions">
-        <button id="importSheets" class="btn-icon" title="Sincronizar desde Sheets">🔄 Sync</button>
-        <button id="exportCSV" class="btn-icon" title="Exportar CSV">⬇ CSV</button>
-        <button id="backupBtn" class="btn-icon" title="Exportar backup completo">💾 Backup</button>
-        <label class="btn-icon" title="Restaurar backup" style="cursor:pointer;margin:0">📂 Restore<input id="restoreBtn" type="file" accept=".json" style="display:none"></label>
-        <button id="clearAll" class="btn-danger-text" title="Borrar todas">🗑 Borrar todo</button>
+        <div class="search-container">
+          <input id="searchSessions" class="search-input" type="search" placeholder="Buscar en tema, notas o URL" />
+        </div>
+        <button id="clearFilters" class="btn-text">Limpiar filtros</button>
       </div>
     </div>
 
-    <div class="filters-container">
-      <div class="filter-group">
-        <span class="filter-icon">📅</span>
-        <select id="filterMonth" class="filter-select">
-          <option value="all">Mes: Todos</option>
-        </select>
-      </div>
-      <div class="filter-group">
-        <span class="filter-icon">🗓</span>
-        <select id="filterYear" class="filter-select">
-          <option value="all">Año: Todos</option>
-        </select>
-      </div>
-      <div class="filter-group">
-        <span class="filter-icon">🏷</span>
-        <select id="filterCategory" class="filter-select">
-          <option value="all">Cat: Todas</option>
-        </select>
-      </div>
-      <div class="filter-group">
-        <span class="filter-icon">🔒</span>
-        <select id="filterType" class="filter-select">
-          <option value="all">Tipo: Todas</option>
-          <option value="privada">Privadas</option>
-          <option value="publica">Públicas</option>
-        </select>
-      </div>
-      <div class="filter-group">
-        <span class="filter-icon">🔗</span>
-        <select id="filterUrl" class="filter-select">
-          <option value="all">URL: Todas</option>
-          <option value="with">Con URL</option>
-          <option value="without">Sin URL</option>
-        </select>
-      </div>
-      <div class="search-container">
-        <span class="search-icon">🔍</span>
-        <input id="searchSessions" class="search-input" type="text" placeholder="Buscar sesiones..." />
-      </div>
-      <button id="clearFilters" class="btn-text">Limpiar</button>
+    <div class="session-filters">
+      <label class="filter-group">
+        <span class="rc-compact-label">Tema</span>
+        <select id="filterTopic" class="filter-select"></select>
+      </label>
+      <label class="filter-group">
+        <span class="rc-compact-label">Año</span>
+        <select id="filterYear" class="filter-select"></select>
+      </label>
+      <label class="filter-group">
+        <span class="rc-compact-label">Mes</span>
+        <select id="filterMonth" class="filter-select"></select>
+      </label>
     </div>
 
     <div class="bulk-bar" id="bulkBar" style="display:none">
       <span id="bulkCount">0 seleccionadas</span>
       <button id="bulkDelete" class="btn-danger-text">🗑 Borrar seleccionadas</button>
-      <button id="bulkExport" class="btn-icon">⬇ Exportar seleccionadas</button>
     </div>
 
     <div class="table-responsive">
-      <table id="sessions" class="modern-table">
+      <table class="modern-table" id="sessions">
         <thead>
           <tr>
             <th style="width:40px"><input type="checkbox" id="selectAll" class="session-check"></th>
+            <th>Tema</th>
             <th>Duración</th>
-            <th>Categoría</th>
-            <th>Tipo</th>
-            <th>Fecha</th>
+            <th>Inicio</th>
+            <th>Modo</th>
             <th>URL</th>
             <th>Notas</th>
             <th style="text-align:right">Acciones</th>
@@ -265,30 +312,126 @@
     <div class="pagination" id="pagination"></div>
   </section>
 
-  <!-- Notes Modal -->
-  <div id="notesModal" class="modal-overlay" style="display:none">
-    <div class="modal-content">
-      <h3>Notas de sesión</h3>
-      <textarea id="notesText" class="notes-textarea" rows="6" placeholder="Escribe notas sobre esta sesión..."></textarea>
+  <!-- ── Temas ───────────────────────────────────────────────────────────── -->
+  <section class="card config-card" data-view="control">
+    <div class="config-header">
+      <h2>Temas</h2>
+      <div class="topics-header-tools">
+        <span class="rc-compact-label" id="topicsHint"></span>
+        <label class="archived-toggle">
+          <input type="checkbox" id="showArchived"> Ver archivados
+        </label>
+      </div>
+    </div>
+    <div class="config-body">
+      <div class="categories-grid" id="topicList"></div>
+    </div>
+  </section>
+
+  <!-- ── Ajustes ─────────────────────────────────────────────────────────── -->
+  <section class="card config-card" data-view="control">
+    <div class="config-header">
+      <h2>Ajustes</h2>
+      <button id="saveSettings" class="btn-primary">Guardar</button>
+    </div>
+    <div class="config-body">
+      <div class="config-controls">
+        <div class="rc-compact-group">
+          <span class="rc-compact-label">Duración del sprint</span>
+          <div class="duration-row">
+            <input id="cfgDuration" class="styled-slider" type="range" min="5" max="240" step="5" value="90" />
+            <span id="durationVal" class="badge-value compact-badge">90 min</span>
+          </div>
+        </div>
+        <label class="rc-compact-group">
+          <span class="rc-compact-label">Modo por defecto</span>
+          <select id="cfgDefaultMode" class="compact-input">
+            <option value="open">Abierto</option>
+            <option value="sprint">Sprint</option>
+          </select>
+        </label>
+        <label class="rc-compact-group">
+          <span class="rc-compact-label">Al acabar el sprint</span>
+          <select id="cfgAutoStop" class="compact-input">
+            <option value="true">Guardar y parar</option>
+            <option value="false">Avisar y seguir en prórroga</option>
+          </select>
+        </label>
+        <label class="rc-compact-group">
+          <span class="rc-compact-label">Objetivo semanal (horas)</span>
+          <input id="cfgWeeklyGoal" class="compact-input" type="number" min="1" max="168" step="1" />
+        </label>
+      </div>
+
+      <div class="config-section">
+        <span class="section-label">Datos</span>
+        <div class="rc-actions">
+          <button id="backupBtn" class="btn-secondary">Descargar backup</button>
+          <label class="btn-secondary file-label">Restaurar backup
+            <input id="restoreBtn" type="file" accept="application/json" hidden />
+          </label>
+          <a class="btn-secondary" href="/api/export.csv">Exportar CSV</a>
+          <button id="clearAll" class="btn-danger-text">Borrar todas las sesiones</button>
+        </div>
+        <p class="config-note" id="dbPathNote"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Modales ─────────────────────────────────────────────────────────── -->
+  <div id="sessionEditModal" class="modal-overlay" style="display:none">
+    <div class="modal-content modal-content-wide">
+      <h3>Editar sesión</h3>
+      <div class="session-edit-grid">
+        <label class="rc-compact-group">
+          <span class="rc-compact-label">Tema</span>
+          <select id="editSessionTopic" class="compact-input"></select>
+        </label>
+        <label class="rc-compact-group">
+          <span class="rc-compact-label">Inicio</span>
+          <input id="editSessionStart" class="compact-input" type="datetime-local" />
+        </label>
+        <label class="rc-compact-group">
+          <span class="rc-compact-label">Duración (min)</span>
+          <input id="editSessionDuration" class="compact-input" type="number" min="0" step="0.1" />
+        </label>
+        <label class="rc-compact-group session-edit-wide">
+          <span class="rc-compact-label">URL del vídeo</span>
+          <input id="editSessionUrl" class="compact-input" type="url"
+            placeholder="https://youtube.com/…" />
+        </label>
+        <label class="rc-compact-group session-edit-wide">
+          <span class="rc-compact-label">Notas</span>
+          <textarea id="editSessionNotes" class="notes-textarea" rows="4"
+            placeholder="Qué hiciste en esta sesión…"></textarea>
+        </label>
+      </div>
       <div class="modal-actions">
-        <button id="notesSave" class="btn-primary">Guardar</button>
-        <button id="notesCancel" class="btn-secondary">Cancelar</button>
+        <button id="sessionEditCancel" class="btn-secondary">Cancelar</button>
+        <button id="sessionEditSave" class="btn-primary">Guardar cambios</button>
       </div>
     </div>
   </div>
 
-  <!-- Shortcut Help -->
-  <div id="shortcutHelp" class="shortcut-help" style="display:none">
-    <h4>Atajos de teclado</h4>
-    <ul>
-      <li><kbd>Space</kbd> Play / Pause / Resume</li>
-      <li><kbd>R</kbd> Reset timer</li>
-      <li><kbd>Ctrl+S</kbd> Guardar config</li>
-      <li><kbd>?</kbd> Mostrar/ocultar atajos</li>
-    </ul>
+  <div id="mergeModal" class="modal-overlay" style="display:none">
+    <div class="modal-content">
+      <h3>Fusionar tema</h3>
+      <p class="config-note" id="mergeText"></p>
+      <label class="rc-compact-group">
+        <span class="rc-compact-label">Mover las sesiones a</span>
+        <select id="mergeTarget" class="compact-input"></select>
+      </label>
+      <div class="modal-actions">
+        <button id="mergeCancel" class="btn-secondary">Cancelar</button>
+        <button id="mergeConfirm" class="btn-primary">Fusionar</button>
+      </div>
+    </div>
   </div>
 
+  <div id="chartTip" class="chart-tip" hidden></div>
   <div id="toastContainer" class="toast-container"></div>
+
+  <script src="charts.js"></script>
   <script src="dashboard.js"></script>
 </body>
 

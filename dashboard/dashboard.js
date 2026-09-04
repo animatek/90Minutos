@@ -1,17 +1,22 @@
-// --- Utilities ---
-function escapeHTML(str) {
+// Panel de control. Habla con la API por fetch y recibe el estado del timer por
+// WebSocket, así que lo que se ve es siempre lo que el servidor tiene guardado.
+'use strict';
+
+// ── Utilidades ──────────────────────────────────────────────────────────────
+
+function esc(str) {
   const div = document.createElement('div');
   div.appendChild(document.createTextNode(String(str ?? '')));
   return div.innerHTML;
 }
 
-function sanitizeUrl(url) {
-  if (!url) return '';
-  const s = String(url).trim();
+function safeUrl(url) {
+  const s = String(url ?? '').trim();
+  if (!s) return '';
   try {
     const parsed = new URL(s);
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return s;
-  } catch {}
+  } catch { /* no es una URL usable */ }
   return '';
 }
 
@@ -30,1482 +35,1055 @@ function toast(message, type = 'info', duration = 3500) {
 }
 
 function debounce(fn, ms) {
-  let timer;
-  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
-function cssVar(name) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+function clock(sec) {
+  const total = Math.max(0, Math.floor(Number(sec) || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 }
 
-// Helpers
-async function loadConfig() { const r = await fetch('/api/config'); return await r.json(); }
-async function saveConfig(cfg) { const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) }); return await r.json(); }
-async function loadSessions() { const r = await fetch('/api/sessions'); return await r.json(); }
-async function loadStats() { const r = await fetch('/api/stats'); return await r.json(); }
-async function getSheetId() { const r = await fetch('/api/sheet/id'); return (await r.json()).sheetId || ''; }
-
-function renderConfig(cfg) {
-  // Duration Slider
-  const durationInput = document.getElementById('cfgDuration');
-  const durationVal = document.getElementById('durationVal');
-  const duration = cfg.defaultDurationMin || 90;
-  durationInput.value = duration;
-  if (durationVal) durationVal.textContent = `${duration} min`;
-
-  const sendDuration = debounce(() => {
-    const minutes = Number(durationInput.value) || 90;
-    sendCmd('setDurationSec', Math.max(60, Math.round(minutes) * 60));
-  }, 400);
-  durationInput.oninput = () => {
-    if (durationVal) durationVal.textContent = `${durationInput.value} min`;
-    sendDuration();
-  };
-
-  // Opacity Slider
-  const op = cfg.opacity ?? 0.85;
-  const opacityInput = document.getElementById('cfgOpacity');
-  const opacityVal = document.getElementById('opacityVal');
-  opacityInput.value = op;
-  if (opacityVal) opacityVal.textContent = (+op).toFixed(2);
-
-  opacityInput.oninput = () => {
-    if (opacityVal) opacityVal.textContent = (+opacityInput.value).toFixed(2);
-  };
-
-  // Categories
-  configCategories = [...(cfg.categories || [])];
-  categoryColors = { ...(cfg.categoryColors || {}) };
-  assignCategoryColors();
-  renderCategoryGrid(cfg);
-
-  // Add Category Logic
-  document.getElementById('addCat').onclick = () => {
-    const input = document.getElementById('newCat');
-    const v = input.value.trim();
-    if (!v) return;
-    if ((cfg.categories || []).includes(v)) { toast('La categoría ya existe', 'warning'); return; }
-
-    cfg.categories = [...(cfg.categories || []), v];
-    ensureCategoryColor(v);
-    cfg.categoryColors = { ...categoryColors };
-
-    input.value = '';
-    renderCategoryGrid(cfg);
-    populateCategorySelect(cfg);
-    populateCategoryFilter(allSessions);
-  };
-
-  // Save Logic
-  document.getElementById('saveCfg').onclick = async () => {
-    const newCfg = {
-      ...cfg,
-      categories: [...(cfg.categories || [])],
-      categoryColors: { ...categoryColors },
-      defaultDurationMin: parseInt(document.getElementById('cfgDuration').value, 10) || 90,
-      opacity: +document.getElementById('cfgOpacity').value
-    };
-    const saved = await saveConfig(newCfg);
-    configCategories = [...(saved.categories || [])];
-    categoryColors = { ...(saved.categoryColors || categoryColors) };
-    assignCategoryColors();
-    toast('Configuración guardada', 'success');
-    populateCategorySelect(saved);
-    populateCategoryFilter(allSessions);
-  };
+function human(sec) {
+  const total = Math.max(0, Math.round(Number(sec) || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.round((total % 3600) / 60);
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h}h`;
+  return `${m}m`;
 }
 
-function renderCategoryGrid(cfg) {
-  const grid = document.getElementById('catList');
-  grid.innerHTML = '';
+/** Clave de día en hora local: agrupar por UTC desplaza las sesiones nocturnas. */
+function dayKey(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
-  for (const c of cfg.categories || []) {
-    const card = document.createElement('div');
-    card.className = 'category-card';
-    const color = ensureCategoryColor(c);
-    card.style.setProperty('--cat-color', color);
+function startOfWeek(date) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // lunes
+  return d;
+}
 
-    // Color Picker
-    const colorInput = document.createElement('input');
-    colorInput.type = 'color';
-    colorInput.className = 'cat-color-picker';
-    colorInput.value = color;
-    colorInput.title = 'Cambiar color';
-    colorInput.oninput = (ev) => {
-      const newColor = ev.target.value;
-      categoryColors[c] = newColor;
-      card.style.setProperty('--cat-color', newColor);
-      cfg.categoryColors = { ...categoryColors };
-      assignCategoryColors();
-      populateCategorySelect(cfg);
-      populateCategoryFilter(allSessions);
-    };
+function decimalHours(sec) {
+  return `${(Math.max(0, Number(sec) || 0) / 3600).toLocaleString('es-ES', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  })} h`;
+}
 
-    // Name Input
-    const nameInput = document.createElement('input');
-    nameInput.value = c;
-    nameInput.className = 'cat-name-edit';
-    nameInput.onchange = () => {
-      const newName = nameInput.value.trim();
-      if (!newName) { nameInput.value = c; return; }
-      if (newName === c) return;
-      if ((cfg.categories || []).includes(newName)) { toast('La categoría ya existe', 'warning'); nameInput.value = c; return; }
+function fmtDateTime(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
 
-      // Update name in list
-      cfg.categories = (cfg.categories || []).map(cat => cat === c ? newName : cat);
-      // Move color to new name
-      categoryColors[newName] = categoryColors[c];
-      delete categoryColors[c];
-      cfg.categoryColors = { ...categoryColors };
+function topicColorVar(slot, color) {
+  return (slot && slot >= 1 && slot <= 8) ? `var(--series-${slot})` : (color || 'var(--series-other)');
+}
 
-      renderCategoryGrid(cfg);
-      populateCategorySelect(cfg);
-      populateCategoryFilter(allSessions);
-      refreshBadgeColors();
-    };
+// ── API ─────────────────────────────────────────────────────────────────────
 
-    // Delete Button
-    const btnDel = document.createElement('button');
-    btnDel.className = 'btn-delete-cat';
-    btnDel.innerHTML = '✕';
-    btnDel.title = 'Eliminar categoría';
-    btnDel.onclick = () => {
-      if (!confirm(`¿Eliminar categoría "${c}"?`)) return;
-      cfg.categories = (cfg.categories || []).filter(x => x !== c);
-      delete categoryColors[c];
-      cfg.categoryColors = { ...categoryColors };
-      renderCategoryGrid(cfg);
-      populateCategorySelect(cfg);
-      populateCategoryFilter(allSessions);
-      refreshBadgeColors();
-    };
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    headers: options.body ? { 'Content-Type': 'application/json', ...(options.headers || {}) } : (options.headers || {}),
+    ...options,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+  return data;
+}
 
-    card.appendChild(colorInput);
-    card.appendChild(nameInput);
-    card.appendChild(btnDel);
-    grid.appendChild(card);
+const post = (path, body) => api(path, { method: 'POST', body });
+const patch = (path, body) => api(path, { method: 'PATCH', body });
+
+// ── Estado local ────────────────────────────────────────────────────────────
+
+let settings = {};
+let topics = [];
+let sessions = [];
+let stats = { byTopic: [], daily: [] };
+let remote = { state: 'idle', mode: 'open', elapsedSec: 0, remainingSec: null, todaySec: 0 };
+let preferredMode = 'open';        // modo con el que arrancarán los temas
+let statsRange = 'all';
+let ws = null;
+let runtimeWsPort = 8765;
+let activeView = 'control';
+
+let currentPage = 1;
+const PAGE_SIZE = 20;
+let searchQuery = '';
+let selectedIds = new Set();
+let calendarMonth = new Date().getMonth();
+let calendarYear = new Date().getFullYear();
+let mergeSourceId = null;
+
+const $ = (id) => document.getElementById(id);
+
+// ── Reloj y estado de la sesión ─────────────────────────────────────────────
+
+function renderTimer() {
+  const box = $('rcTimer');
+  const isSprint = remote.mode === 'sprint' && remote.plannedSec != null;
+  const overtime = isSprint && remote.overtimeSec > 0;
+
+  box.dataset.state = overtime ? 'overtime' : remote.state;
+
+  // En sprint interesa lo que queda; en abierto, lo acumulado.
+  const main = isSprint
+    ? (overtime ? `+${clock(remote.overtimeSec)}` : clock(remote.remainingSec))
+    : clock(remote.elapsedSec);
+  $('rcTimerValue').textContent = main;
+
+  $('rcTimerMode').textContent = isSprint
+    ? (overtime ? 'Prórroga' : `Sprint ${Math.round(remote.plannedSec / 60)}′`)
+    : 'Abierto';
+
+  const stateText = { running: 'En curso', paused: 'En pausa', idle: 'En espera' }[remote.state] || '—';
+  const parts = [stateText];
+  if (remote.topic) parts.push(remote.topic);
+  if (remote.state !== 'idle') parts.push(`trabajado ${human(remote.elapsedSec)}`);
+  if (remote.startedAtISO) parts.push(`desde ${new Date(remote.startedAtISO).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`);
+  $('rcTimerState').textContent = parts.join(' · ');
+
+  const track = $('rcProgressTrack');
+  track.hidden = !isSprint;
+  if (isSprint) {
+    const pct = Math.min(100, (remote.elapsedSec / Math.max(1, remote.plannedSec)) * 100);
+    $('rcTimerProgress').style.width = `${pct}%`;
+  }
+
+  $('rcToday').textContent = human(remote.todaySec);
+
+  // Botones acordes al estado: nada de pulsar lo que no aplica.
+  const active = remote.state !== 'idle';
+  $('rcActions').hidden = !active;
+  $('rcPause').hidden = remote.state !== 'running';
+  $('rcResume').hidden = remote.state !== 'paused';
+  $('rcStop').hidden = !active;
+  $('rcDiscard').hidden = !active;
+  $('rcExtend').hidden = !active || remote.mode !== 'sprint';
+
+  // El selector de modo refleja la sesión en curso; sin sesión, la preferencia.
+  const shown = active ? remote.mode : preferredMode;
+  $('modeOpen').setAttribute('aria-pressed', String(shown === 'open'));
+  $('modeSprint').setAttribute('aria-pressed', String(shown === 'sprint'));
+  $('modeSprintMin').textContent = Math.round((settings.defaultDurationMin || 90));
+
+  // Los metadatos no se sobreescriben mientras se escribe en ellos.
+  for (const [id, value] of [['rcUrl', remote.url], ['rcNotes', remote.notes]]) {
+    const input = $(id);
+    if (input && document.activeElement !== input) input.value = value || '';
+  }
+  $('quickTopicMode').textContent = shown === 'sprint' ? `sprint de ${settings.defaultDurationMin || 90} min` : 'abierto';
+
+  renderTopicGrid();
+}
+
+// ── Lanzador de temas ───────────────────────────────────────────────────────
+
+function renderTopicGrid() {
+  const grid = $('topicGrid');
+  const query = ($('topicSearch').value || '').trim().toLowerCase();
+  const hours = new Map(stats.byTopic.map(t => [t.topic, t.totalSec]));
+
+  const visible = topics
+    .filter(t => !t.archived)
+    .filter(t => !query || t.name.toLowerCase().includes(query))
+    .sort((a, b) => (hours.get(b.name) || 0) - (hours.get(a.name) || 0) || a.name.localeCompare(b.name, 'es'));
+
+  grid.replaceChildren();
+  if (!visible.length) {
+    const p = document.createElement('p');
+    p.className = 'topic-empty';
+    p.textContent = topics.length ? 'Ningún tema coincide con la búsqueda.' : 'Crea tu primer tema más abajo.';
+    grid.appendChild(p);
+    return;
+  }
+
+  for (const t of visible) {
+    const btn = document.createElement('button');
+    btn.className = 'topic-btn' + (remote.topicId === t.id && remote.state !== 'idle' ? ' is-active' : '');
+    btn.style.setProperty('--topic-color', topicColorVar(t.paletteSlot, t.color));
+    btn.title = `Empezar a contar en ${t.name}`;
+
+    const dot = document.createElement('span');
+    dot.className = 'topic-dot';
+    const name = document.createElement('span');
+    name.className = 'topic-name';
+    name.textContent = t.name;
+    const hrs = document.createElement('span');
+    hrs.className = 'topic-hours';
+    hrs.textContent = hours.has(t.name) ? human(hours.get(t.name)) : '';
+
+    btn.append(dot, name, hrs);
+    btn.onclick = () => startTopic(t);
+    grid.appendChild(btn);
   }
 }
 
-let totalsSortState = 'none'; // none | desc | asc
-let latestStats = null;
-
-let chartDonutInstance = null;
-let chartBarInstance = null;
-let selectedSessionIds = new Set();
-let currentPage = 1;
-const PAGE_SIZE = 20;
-let currentSearchQuery = '';
-let lastFilteredSessions = [];
-
-
-function renderKPIs(sessions) {
-  const totalHoursEl = document.getElementById('kpiTotalHours');
-  const weekSessionsEl = document.getElementById('kpiWeekSessions');
-  const avgDurationEl = document.getElementById('kpiAvgDuration');
-  const bestDayEl = document.getElementById('kpiBestDay');
-
-  let totalMin = 0;
-  const dailyMin = {};
-  const now = new Date();
-  const weekAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
-  let weekCount = 0;
-
-  (sessions || []).forEach(s => {
-    const min = (s.durationSec ? s.durationSec / 60 : s.durationMin) || 0;
-    totalMin += min;
-    if (s.startISO) {
-      const dateKey = s.startISO.split('T')[0];
-      dailyMin[dateKey] = (dailyMin[dateKey] || 0) + min;
-      if (new Date(s.startISO) >= weekAgo) weekCount++;
+async function startTopic(topic) {
+  try {
+    const body = { topicId: topic.id, mode: preferredMode };
+    if (preferredMode === 'sprint') body.plannedMin = settings.defaultDurationMin || 90;
+    const result = await post('/api/timer/start', body);
+    if (result.previous) {
+      toast(`${result.previous.topic} guardado (${human(result.previous.durationSec)}) → ${topic.name}`, 'success');
+    } else {
+      toast(`Contando en ${topic.name}`, 'success');
     }
-  });
+    await refreshData();
+  } catch (e) { toast(e.message, 'error'); }
+}
 
-  const totalHours = totalMin / 60;
-  const avgMin = sessions.length ? totalMin / sessions.length : 0;
+// ── Indicadores ─────────────────────────────────────────────────────────────
 
-  // Best day of week
-  const dayOfWeekMin = [0, 0, 0, 0, 0, 0, 0]; // Sun-Sat
-  Object.entries(dailyMin).forEach(([dateStr, mins]) => {
-    const dow = new Date(dateStr).getDay();
-    dayOfWeekMin[dow] += mins;
-  });
-  const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-  let bestDowIdx = 0;
-  dayOfWeekMin.forEach((v, i) => { if (v > dayOfWeekMin[bestDowIdx]) bestDowIdx = i; });
-  const bestDay = dayOfWeekMin[bestDowIdx] > 0 ? dayNames[bestDowIdx] : '—';
+function renderKPIs() {
+  const closed = sessions.filter(s => !s.active);
+  const totalSec = closed.reduce((a, s) => a + s.durationSec, 0);
 
-  if (totalHoursEl) totalHoursEl.textContent = totalHours.toFixed(1);
-  if (weekSessionsEl) weekSessionsEl.textContent = weekCount;
-  if (avgDurationEl) avgDurationEl.textContent = avgMin.toFixed(0);
-  if (bestDayEl) bestDayEl.textContent = bestDay;
+  const now = new Date();
+  const weekStart = startOfWeek(now);
+  const previousWeekStart = new Date(weekStart);
+  previousWeekStart.setDate(previousWeekStart.getDate() - 7);
 
-  // Week comparison
-  const twoWeeksAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 14);
-  let thisWeekHrs = 0, lastWeekHrs = 0, thisWeekCount = 0, lastWeekCount = 0;
-  (sessions || []).forEach(s => {
-    if (!s.startISO) return;
+  let weekSec = 0, weekCount = 0, prevSec = 0, prevCount = 0;
+  for (const s of closed) {
     const d = new Date(s.startISO);
-    const hrs = (s.durationSec ? s.durationSec / 3600 : (s.durationMin || 0) / 60);
-    if (d >= weekAgo) { thisWeekHrs += hrs; thisWeekCount++; }
-    else if (d >= twoWeeksAgo) { lastWeekHrs += hrs; lastWeekCount++; }
-  });
+    if (d >= weekStart && d <= now) { weekSec += s.durationSec; weekCount++; }
+    else if (d >= previousWeekStart && d < weekStart) { prevSec += s.durationSec; prevCount++; }
+  }
 
-  function deltaText(curr, prev) {
-    if (prev === 0 && curr === 0) return { text: '=', cls: 'flat' };
-    if (prev === 0) return { text: '+100%', cls: 'up' };
+  $('kpiTotalHours').textContent = (totalSec / 3600).toFixed(1);
+  $('kpiWeekHours').textContent = (weekSec / 3600).toFixed(1);
+  $('kpiSessions').textContent = closed.length;
+  $('kpiAvgDuration').textContent = closed.length ? Math.round(totalSec / closed.length / 60) : 0;
+
+  const delta = (curr, prev) => {
+    if (!prev && !curr) return { text: '=', cls: 'flat' };
+    if (!prev) return { text: '+100%', cls: 'up' };
     const pct = Math.round(((curr - prev) / prev) * 100);
     if (pct > 0) return { text: `+${pct}%`, cls: 'up' };
     if (pct < 0) return { text: `${pct}%`, cls: 'down' };
     return { text: '=', cls: 'flat' };
-  }
+  };
 
-  const wcHoursThis = document.getElementById('wcHoursThis');
-  const wcHoursDelta = document.getElementById('wcHoursDelta');
-  const wcSessionsThis = document.getElementById('wcSessionsThis');
-  const wcSessionsDelta = document.getElementById('wcSessionsDelta');
+  $('wcHoursThis').textContent = `${(weekSec / 3600).toFixed(1)}h`;
+  const dh = delta(weekSec, prevSec);
+  $('wcHoursDelta').textContent = dh.text;
+  $('wcHoursDelta').className = `week-compare-delta ${dh.cls}`;
 
-  if (wcHoursThis) wcHoursThis.textContent = thisWeekHrs.toFixed(1) + 'h';
-  if (wcHoursDelta) {
-    const d = deltaText(thisWeekHrs, lastWeekHrs);
-    wcHoursDelta.textContent = d.text;
-    wcHoursDelta.className = `week-compare-delta ${d.cls}`;
-  }
-  if (wcSessionsThis) wcSessionsThis.textContent = thisWeekCount;
-  if (wcSessionsDelta) {
-    const d = deltaText(thisWeekCount, lastWeekCount);
-    wcSessionsDelta.textContent = d.text;
-    wcSessionsDelta.className = `week-compare-delta ${d.cls}`;
+  $('wcSessionsThis').textContent = weekCount;
+  const ds = delta(weekCount, prevCount);
+  $('wcSessionsDelta').textContent = ds.text;
+  $('wcSessionsDelta').className = `week-compare-delta ${ds.cls}`;
+
+  renderGoalProgress(closed, now, weekStart);
+}
+
+function renderGoalProgress(closed, now, weekStart) {
+  const goalWeekHours = Math.min(168, Math.max(1, Number(settings.weeklyGoalHours) || 15));
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const yearStart = new Date(now.getFullYear(), 0, 1);
+
+  const sumFrom = (from) => closed.reduce((total, session) => {
+    const date = new Date(session.startISO);
+    return date >= from && date <= now ? total + session.durationSec : total;
+  }, 0);
+
+  const periods = [
+    { key: 'Week', current: sumFrom(weekStart), targetHours: goalWeekHours },
+    { key: 'Month', current: sumFrom(monthStart), targetHours: goalWeekHours * 4 },
+    { key: 'Year', current: sumFrom(yearStart), targetHours: goalWeekHours * 52 },
+  ];
+
+  $('goalWeeklyBadge').textContent = `${goalWeekHours} h`;
+  for (const period of periods) {
+    const targetSec = period.targetHours * 3600;
+    const percent = Math.min(100, (period.current / targetSec) * 100);
+    $(`goal${period.key}Current`).textContent = decimalHours(period.current);
+    $(`goal${period.key}Target`).textContent = `${period.targetHours} h`;
+    $(`goal${period.key}Bar`).style.width = `${percent}%`;
+    $(`goal${period.key}Row`).classList.toggle('is-complete', period.current >= targetSec);
   }
 }
 
-function renderHeatmap(sessions) {
-  const grid = document.getElementById('heatmapGrid');
-  if (!grid) return;
-  grid.innerHTML = '';
+// ── Gráficas ────────────────────────────────────────────────────────────────
 
-  // Build daily hours map
-  const dailyHours = {};
-  (sessions || []).forEach(s => {
-    if (!s.startISO) return;
-    const key = s.startISO.split('T')[0];
-    const hrs = (s.durationSec ? s.durationSec / 3600 : (s.durationMin || 0) / 60);
-    dailyHours[key] = (dailyHours[key] || 0) + hrs;
-  });
+function renderCharts() {
+  window.Charts.renderTopicBars($('chartTopics'), stats.byTopic);
 
-  // Last ~26 weeks (6 months)
+  // Tabla equivalente: cumple el requisito de que el dato se pueda leer escrito.
+  const tbody = document.querySelector('#topicsTable tbody');
+  tbody.replaceChildren();
+  for (const t of stats.byTopic) {
+    const tr = document.createElement('tr');
+    for (const value of [t.topic, `${t.totalHours.toFixed(2)} h`, t.sessions]) {
+      const td = document.createElement('td');
+      td.textContent = value;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+
+  // Últimos 14 días, incluidos los vacíos.
+  const byDay = new Map(stats.daily.map(d => [d.day, d]));
+  const days = [];
   const today = new Date();
-  const totalWeeks = 26;
-  // Find the start: go back totalWeeks*7 days, align to Sunday
-  const startDate = new Date(today);
-  startDate.setDate(today.getDate() - (totalWeeks * 7) - today.getDay());
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const entry = byDay.get(key);
+    days.push({
+      sec: entry ? entry.totalSec : 0,
+      sessions: entry ? entry.sessions : 0,
+      isToday: i === 0,
+      labelShort: d.toLocaleDateString('es-ES', { day: 'numeric', month: 'numeric' }),
+      labelLong: d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' }),
+    });
+  }
+  window.Charts.renderDayBars($('chartDays'), days);
+}
 
-  // Find max for scaling
-  const allVals = Object.values(dailyHours);
-  const maxHours = allVals.length ? Math.max(...allVals) : 1;
+// ── Mapa de actividad ───────────────────────────────────────────────────────
 
-  function getLevel(hrs) {
-    if (!hrs || hrs <= 0) return 0;
-    const ratio = hrs / maxHours;
+function renderHeatmap() {
+  const grid = $('heatmapGrid');
+  grid.replaceChildren();
+
+  const daily = new Map();
+  for (const s of sessions) {
+    if (s.active) continue;
+    const key = dayKey(s.startISO);
+    if (key) daily.set(key, (daily.get(key) || 0) + s.durationSec);
+  }
+
+  const today = new Date();
+  const start = new Date(today);
+  start.setDate(today.getDate() - 26 * 7 - today.getDay());
+  const max = Math.max(...daily.values(), 1);
+
+  const level = (sec) => {
+    if (!sec) return 0;
+    const ratio = sec / max;
     if (ratio <= 0.25) return 1;
     if (ratio <= 0.5) return 2;
     if (ratio <= 0.75) return 3;
     return 4;
-  }
+  };
 
-  const dayNames = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
-
-  // Build weeks
-  const cursor = new Date(startDate);
+  const cursor = new Date(start);
   while (cursor <= today) {
-    const weekCol = document.createElement('div');
-    weekCol.className = 'heatmap-week';
-
+    const week = document.createElement('div');
+    week.className = 'heatmap-week';
     for (let d = 0; d < 7; d++) {
       const cell = document.createElement('div');
       cell.className = 'heatmap-cell';
-      const dateStr = cursor.toISOString().split('T')[0];
-
       if (cursor <= today) {
-        const hrs = dailyHours[dateStr] || 0;
-        const level = getLevel(hrs);
-        if (level > 0) cell.setAttribute('data-level', level);
-        cell.title = `${dateStr}: ${hrs.toFixed(1)}h`;
+        const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+        const sec = daily.get(key) || 0;
+        const lvl = level(sec);
+        if (lvl) cell.setAttribute('data-level', lvl);
+        cell.title = `${cursor.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' })}: ${sec ? human(sec) : 'sin actividad'}`;
       } else {
         cell.style.visibility = 'hidden';
       }
-
-      weekCol.appendChild(cell);
+      week.appendChild(cell);
       cursor.setDate(cursor.getDate() + 1);
     }
-
-    grid.appendChild(weekCol);
+    grid.appendChild(week);
   }
 }
 
-// Calendar
-let calendarMonth = new Date().getMonth();
-let calendarYear = new Date().getFullYear();
+// ── Calendario ──────────────────────────────────────────────────────────────
 
-function renderCalendar(sessions) {
-  const grid = document.getElementById('calendarGrid');
-  const title = document.getElementById('calTitle');
-  if (!grid || !title) return;
+function renderCalendar() {
+  const grid = $('calendarGrid');
+  $('calTitle').textContent = new Date(calendarYear, calendarMonth, 1)
+    .toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
 
-  const monthDate = new Date(calendarYear, calendarMonth, 1);
-  title.textContent = monthDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
-
-  // Build daily data
-  const dailyData = {}; // dateKey -> { hours, categories: Set }
-  (sessions || []).forEach(s => {
-    if (!s.startISO) return;
-    const key = s.startISO.split('T')[0];
-    if (!dailyData[key]) dailyData[key] = { hours: 0, categories: new Set() };
-    const hrs = (s.durationSec ? s.durationSec / 3600 : (s.durationMin || 0) / 60);
-    dailyData[key].hours += hrs;
-    if (s.category) dailyData[key].categories.add(s.category);
-  });
-
-  grid.innerHTML = '';
-  const dayHeaders = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
-  for (const dh of dayHeaders) {
-    const hdr = document.createElement('div');
-    hdr.className = 'calendar-day-header';
-    hdr.textContent = dh;
-    grid.appendChild(hdr);
+  const daily = new Map();
+  for (const s of sessions) {
+    if (s.active) continue;
+    const key = dayKey(s.startISO);
+    if (!key) continue;
+    if (!daily.has(key)) daily.set(key, { sec: 0, topics: new Map() });
+    const entry = daily.get(key);
+    entry.sec += s.durationSec;
+    entry.topics.set(s.topic, topicColorVar(s.topicSlot, s.topicColor));
   }
 
-  const firstDay = new Date(calendarYear, calendarMonth, 1);
-  const lastDay = new Date(calendarYear, calendarMonth + 1, 0);
-  // Monday = 0 in our grid
-  let startDow = firstDay.getDay() - 1;
-  if (startDow < 0) startDow = 6;
+  grid.replaceChildren();
+  for (const label of ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']) {
+    const h = document.createElement('div');
+    h.className = 'calendar-day-header';
+    h.textContent = label;
+    grid.appendChild(h);
+  }
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const firstDow = (new Date(calendarYear, calendarMonth, 1).getDay() + 6) % 7;   // lunes = 0
+  const lastDate = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+  const todayKey = dayKey(new Date().toISOString());
 
-  // Empty cells before
-  for (let i = 0; i < startDow; i++) {
+  for (let i = 0; i < firstDow; i++) {
     const empty = document.createElement('div');
     empty.className = 'calendar-day empty';
     grid.appendChild(empty);
   }
 
-  for (let d = 1; d <= lastDay.getDate(); d++) {
-    const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    const data = dailyData[dateStr];
+  for (let d = 1; d <= lastDate; d++) {
+    const key = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const entry = daily.get(key);
     const cell = document.createElement('div');
-    cell.className = 'calendar-day' + (dateStr === todayStr ? ' today' : '');
+    cell.className = 'calendar-day' + (key === todayKey ? ' today' : '');
 
     const num = document.createElement('span');
     num.className = 'calendar-day-num';
     num.textContent = d;
     cell.appendChild(num);
 
-    if (data && data.hours > 0) {
+    if (entry) {
       const hrs = document.createElement('span');
       hrs.className = 'calendar-day-hours';
-      hrs.textContent = data.hours.toFixed(1) + 'h';
+      hrs.textContent = human(entry.sec);
       cell.appendChild(hrs);
 
-      if (data.categories.size > 0) {
-        const dots = document.createElement('div');
-        dots.className = 'calendar-day-dots';
-        for (const cat of data.categories) {
-          const dot = document.createElement('div');
-          dot.className = 'calendar-cat-dot';
-          dot.style.background = getCategoryColor(cat);
-          dot.title = cat;
-          dots.appendChild(dot);
-        }
-        cell.appendChild(dots);
+      const dots = document.createElement('div');
+      dots.className = 'calendar-day-dots';
+      for (const [name, color] of entry.topics) {
+        const dot = document.createElement('div');
+        dot.className = 'calendar-cat-dot';
+        dot.style.background = color;
+        dot.title = name;
+        dots.appendChild(dot);
       }
+      cell.appendChild(dots);
+      cell.title = `${key} — ${human(entry.sec)}: ${[...entry.topics.keys()].join(', ')}`;
+    } else {
+      cell.title = key;
     }
-
-    cell.title = dateStr + (data ? ` — ${data.hours.toFixed(1)}h` : '');
     grid.appendChild(cell);
   }
 }
 
-function renderStats(stats) {
-  latestStats = stats;
+// ── Historial ───────────────────────────────────────────────────────────────
 
+function filteredSessions() {
+  const topicVal = $('filterTopic').value;
+  const yearVal = $('filterYear').value;
+  const monthVal = $('filterMonth').value;
+  const q = searchQuery.toLowerCase();
 
-  // KPI Cards
-  renderKPIs(allSessions);
-
-  // Heatmap
-  renderHeatmap(allSessions);
-
-  // Calendar
-  renderCalendar(allSessions);
-
-  // Prepare Data
-  const entries = Object.entries((stats && stats.totalsHours) || {});
-  // Sort by hours desc
-  entries.sort((a, b) => b[1] - a[1]);
-
-  const labels = entries.map(e => e[0]);
-  const dataHours = entries.map(e => e[1]);
-  const colors = labels.map(cat => getCategoryColor(cat));
-
-  // --- Donut Chart (Distribution) ---
-  const ctxDonut = document.getElementById('chartDonut');
-  if (ctxDonut) {
-    if (chartDonutInstance) chartDonutInstance.destroy();
-    chartDonutInstance = new Chart(ctxDonut, {
-      type: 'doughnut',
-      data: {
-        labels: labels,
-        datasets: [{
-          data: dataHours,
-          backgroundColor: colors,
-          borderColor: cssVar('--bg-body'),
-          borderWidth: 2
-        }]
-      },
-      options: {
-        responsive: true,
-        plugins: {
-          legend: { position: 'right', labels: { color: cssVar('--text-muted'), font: { family: 'JetBrains Mono' } } }
-        }
-      }
-    });
-  }
-
-  // --- Bar Chart (Last 7 Days) ---
-  // We need to calculate daily totals from allSessions
-  const dailyTotals = {}; // { 'YYYY-MM-DD': hours }
-  const today = new Date();
-  const last7Days = [];
-
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(today.getDate() - i);
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    const key = `${yyyy}-${mm}-${dd}`;
-    last7Days.push(key);
-    dailyTotals[key] = 0;
-  }
-
-  (allSessions || []).forEach(s => {
-    if (!s.startISO) return;
-    const dateKey = s.startISO.split('T')[0];
-    if (dailyTotals.hasOwnProperty(dateKey)) {
-      const hrs = (s.durationSec ? s.durationSec / 3600 : (s.durationMin || 0) / 60);
-      dailyTotals[dateKey] += hrs;
-    }
-  });
-
-  const barData = last7Days.map(k => dailyTotals[k]);
-  const barLabels = last7Days.map(k => k.slice(5)); // MM-DD
-
-  const ctxBar = document.getElementById('chartBar');
-  if (ctxBar) {
-    if (chartBarInstance) chartBarInstance.destroy();
-    chartBarInstance = new Chart(ctxBar, {
-      type: 'bar',
-      data: {
-        labels: barLabels,
-        datasets: [{
-          label: 'Horas diarias',
-          data: barData,
-          backgroundColor: cssVar('--accent-color'),
-          borderRadius: 4
-        }]
-      },
-      options: {
-        responsive: true,
-        scales: {
-          y: { beginAtZero: true, grid: { color: cssVar('--border-color') }, ticks: { color: cssVar('--text-muted') } },
-          x: { grid: { display: false }, ticks: { color: cssVar('--text-muted') } }
-        },
-        plugins: {
-          legend: { display: false }
-        }
-      }
-    });
-  }
-
-}
-
-function formatDateShort(iso) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) {
-    return typeof iso === 'string' ? iso : '—';
-  }
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-function sortSessionsByStart(list) {
-  const arr = Array.isArray(list) ? list.slice() : [];
-  arr.sort((a, b) => {
-    const aTime = Date.parse(a?.startISO || '');
-    const bTime = Date.parse(b?.startISO || '');
-    const aFallback = Number(a?.id || 0);
-    const bFallback = Number(b?.id || 0);
-    const aVal = Number.isNaN(aTime) ? aFallback : aTime;
-    const bVal = Number.isNaN(bTime) ? bFallback : bTime;
-    return bVal - aVal;
-  });
-  return arr;
-}
-function updateBulkBar() {
-  const bar = document.getElementById('bulkBar');
-  const countEl = document.getElementById('bulkCount');
-  if (!bar) return;
-  if (selectedSessionIds.size > 0) {
-    bar.style.display = 'flex';
-    if (countEl) countEl.textContent = `${selectedSessionIds.size} seleccionada${selectedSessionIds.size > 1 ? 's' : ''}`;
-  } else {
-    bar.style.display = 'none';
-  }
-}
-
-function applySearch(sessions) {
-  if (!currentSearchQuery) return sessions;
-  const q = currentSearchQuery.toLowerCase();
   return sessions.filter(s => {
-    const cat = (s.category || '').toLowerCase();
-    const notes = (s.notes || '').toLowerCase();
-    const url = (s.url || '').toLowerCase();
-    const name = (s.sessionName || '').toLowerCase();
-    return cat.includes(q) || notes.includes(q) || url.includes(q) || name.includes(q);
+    if (s.active) return false;
+    if (topicVal !== 'all' && String(s.topicId) !== topicVal) return false;
+    const d = new Date(s.startISO);
+    if (yearVal !== 'all' && String(d.getFullYear()) !== yearVal) return false;
+    if (monthVal !== 'all' && String(d.getMonth() + 1) !== monthVal) return false;
+    if (q) {
+      const haystack = `${s.topic} ${s.notes} ${s.url}`.toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    return true;
   });
 }
 
-function renderPagination(totalItems) {
-  const container = document.getElementById('pagination');
-  if (!container) return;
-  container.innerHTML = '';
-  const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
-  if (totalPages <= 1) return;
-
-  // Prev button
-  const prevBtn = document.createElement('button');
-  prevBtn.textContent = '‹';
-  prevBtn.disabled = currentPage <= 1;
-  prevBtn.onclick = () => { currentPage--; renderSessions(lastFilteredSessions); };
-  container.appendChild(prevBtn);
-
-  // Page buttons (show max 7 pages with ellipsis)
-  const maxVisible = 7;
-  let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
-  let end = Math.min(totalPages, start + maxVisible - 1);
-  if (end - start < maxVisible - 1) start = Math.max(1, end - maxVisible + 1);
-
-  if (start > 1) {
-    const btn = document.createElement('button');
-    btn.textContent = '1';
-    btn.onclick = () => { currentPage = 1; renderSessions(lastFilteredSessions); };
-    container.appendChild(btn);
-    if (start > 2) {
-      const dots = document.createElement('span');
-      dots.textContent = '…';
-      dots.className = 'pagination-info';
-      container.appendChild(dots);
-    }
-  }
-
-  for (let i = start; i <= end; i++) {
-    const btn = document.createElement('button');
-    btn.textContent = i;
-    if (i === currentPage) btn.classList.add('active');
-    btn.onclick = () => { currentPage = i; renderSessions(lastFilteredSessions); };
-    container.appendChild(btn);
-  }
-
-  if (end < totalPages) {
-    if (end < totalPages - 1) {
-      const dots = document.createElement('span');
-      dots.textContent = '…';
-      dots.className = 'pagination-info';
-      container.appendChild(dots);
-    }
-    const btn = document.createElement('button');
-    btn.textContent = totalPages;
-    btn.onclick = () => { currentPage = totalPages; renderSessions(lastFilteredSessions); };
-    container.appendChild(btn);
-  }
-
-  // Next button
-  const nextBtn = document.createElement('button');
-  nextBtn.textContent = '›';
-  nextBtn.disabled = currentPage >= totalPages;
-  nextBtn.onclick = () => { currentPage++; renderSessions(lastFilteredSessions); };
-  container.appendChild(nextBtn);
-
-  // Info
-  const info = document.createElement('span');
-  info.className = 'pagination-info';
-  const from = (currentPage - 1) * PAGE_SIZE + 1;
-  const to = Math.min(currentPage * PAGE_SIZE, totalItems);
-  info.textContent = `${from}–${to} de ${totalItems}`;
-  container.appendChild(info);
-}
-
-function renderSessions(sessions) {
-  selectedSessionIds.clear();
-  updateBulkBar();
-  const ordered = sortSessionsByStart(sessions || []);
-  const searched = applySearch(ordered);
-  lastFilteredSessions = sessions;
-
-  // Pagination
-  const totalPages = Math.max(1, Math.ceil(searched.length / PAGE_SIZE));
+function renderSessions() {
+  const rows = filteredSessions();
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   if (currentPage > totalPages) currentPage = totalPages;
-  const startIdx = (currentPage - 1) * PAGE_SIZE;
-  const paged = searched.slice(startIdx, startIdx + PAGE_SIZE);
+  const page = rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
-  const tbody = document.querySelector('#sessions tbody'); tbody.innerHTML = '';
-  const selectAllEl = document.getElementById('selectAll');
-  if (selectAllEl) selectAllEl.checked = false;
+  const tbody = document.querySelector('#sessions tbody');
+  tbody.replaceChildren();
+  $('selectAll').checked = false;
+  selectedIds.clear();
+  updateBulkBar();
 
-  for (const s of paged) {
-    const minExact = ((s.durationSec ? s.durationSec / 60 : s.durationMin) || 0);
-    const minText = Number(minExact).toFixed(2) + ' min';
-    const fechas = formatDateShort(s.startISO);
-    const safeUrl = sanitizeUrl(s.url);
-    const urlCell = safeUrl ? `<a href="${escapeHTML(safeUrl)}" target="_blank" rel="noopener" title="${escapeHTML(safeUrl)}">🔗 Link</a>` : '—';
-    const safeCat = escapeHTML(s.category || '');
-    const catColor = getCategoryColor(s.category);
-    const catBadge = s.category ? `<span class="cat-badge" data-cat="${safeCat}" style="--cat-color:${catColor}">${safeCat}</span>` : '—';
-    const noteIcon = s.notes ? '📋' : '📝';
-    const noteClass = s.notes ? 'btn-notes has-notes' : 'btn-notes';
-    const safeId = Number(s.id) || 0;
-    const safeType = escapeHTML(s.sessionType || '—');
+  for (const s of page) {
     const tr = document.createElement('tr');
+    const url = safeUrl(s.url);
     tr.innerHTML = `
-      <td><input type="checkbox" class="session-check" data-sid="${safeId}"></td>
-      <td>${minText}</td>
-      <td>${catBadge}</td>
-      <td style="text-transform:capitalize">${safeType}</td>
-      <td>${fechas}</td>
-      <td>${urlCell}</td>
-      <td><button class="${noteClass}" data-note-id="${safeId}" title="Notas">${noteIcon}</button></td>
-      <td><button class="btn-notes" data-dup="${safeId}" title="Duplicar sesión">📋</button><button class="btn-trash" data-del="${safeId}" title="Borrar sesión">🗑</button></td>
+      <td><input type="checkbox" class="session-check" data-sid="${s.id}"></td>
+      <td><span class="cat-badge" style="--cat-color:${esc(topicColorVar(s.topicSlot, s.topicColor))}">${esc(s.topic)}</span></td>
+      <td>${esc(human(s.durationSec))}</td>
+      <td>${esc(fmtDateTime(s.startISO))}</td>
+      <td>${s.mode === 'sprint' ? 'Sprint' : 'Abierto'}</td>
+      <td class="session-url-cell">${url
+        ? `<a href="${esc(url)}" target="_blank" rel="noopener">Abrir ↗</a><button class="btn-inline-edit" data-edit-url="${s.id}" title="Cambiar URL">✎</button>`
+        : `<button class="btn-inline-add" data-edit-url="${s.id}">＋ Añadir URL</button>`}</td>
+      <td><span class="session-note-preview" title="${esc(s.notes || '')}">${esc(s.notes || '—')}</span></td>
+      <td class="session-row-actions">
+        <button class="btn-edit" data-edit="${s.id}" title="Editar sesión">✎</button>
+        <button class="btn-trash" data-del="${s.id}" title="Borrar">🗑</button>
+      </td>
     `;
     tbody.appendChild(tr);
   }
 
-  renderPagination(searched.length);
-
-  // Checkbox handlers
   tbody.querySelectorAll('.session-check').forEach(cb => {
     cb.onchange = () => {
-      const sid = Number(cb.getAttribute('data-sid'));
-      if (cb.checked) selectedSessionIds.add(sid); else selectedSessionIds.delete(sid);
+      const id = Number(cb.dataset.sid);
+      if (cb.checked) selectedIds.add(id); else selectedIds.delete(id);
       updateBulkBar();
     };
   });
-
-  // Select All (selects visible page)
-  if (selectAllEl) {
-    selectAllEl.onchange = () => {
-      const checked = selectAllEl.checked;
-      tbody.querySelectorAll('.session-check').forEach(cb => {
-        cb.checked = checked;
-        const sid = Number(cb.getAttribute('data-sid'));
-        if (checked) selectedSessionIds.add(sid); else selectedSessionIds.delete(sid);
-      });
-      updateBulkBar();
-    };
-  }
-
-  // Notes handlers
-  tbody.querySelectorAll('.btn-notes').forEach(btn => {
-    btn.onclick = () => {
-      const id = Number(btn.getAttribute('data-note-id'));
-      const session = allSessions.find(s => Number(s.id) === id);
-      openNotesModal(id, session ? session.notes || '' : '');
-    };
+  tbody.querySelectorAll('[data-edit]').forEach(btn => {
+    btn.onclick = () => openSessionEditor(Number(btn.dataset.edit));
   });
-
-  // Delete handlers
-  tbody.querySelectorAll('button[data-del]').forEach(btn => {
+  tbody.querySelectorAll('[data-edit-url]').forEach(btn => {
+    btn.onclick = () => openSessionEditor(Number(btn.dataset.editUrl), { focusUrl: true });
+  });
+  tbody.querySelectorAll('[data-del]').forEach(btn => {
     btn.onclick = async () => {
-      const id = btn.getAttribute('data-del');
       if (!confirm('¿Borrar esta sesión?')) return;
-      await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
-      toast('Sesión eliminada', 'success');
-      await refreshAll();
+      try {
+        await api(`/api/sessions/${btn.dataset.del}`, { method: 'DELETE' });
+        toast('Sesión borrada', 'success');
+        await refreshData();
+      } catch (e) { toast(e.message, 'error'); }
     };
   });
 
-  // Duplicate handlers
-  tbody.querySelectorAll('button[data-dup]').forEach(btn => {
-    btn.onclick = async () => {
-      const id = Number(btn.getAttribute('data-dup'));
-      const original = allSessions.find(s => Number(s.id) === id);
-      if (!original) return;
-      const dup = {
-        category: original.category, language: original.language,
-        sessionType: original.sessionType, sessionName: original.sessionName,
-        durationMin: original.durationMin, durationSec: original.durationSec,
-        url: original.url, notes: original.notes,
-        startISO: new Date().toISOString()
-      };
-      await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dup) });
-      toast('Sesión duplicada', 'success');
-      await refreshAll();
-    };
-  });
+  renderPagination(rows.length, totalPages);
 }
 
-function openNotesModal(sessionId, currentNotes) {
-  const modal = document.getElementById('notesModal');
-  const textarea = document.getElementById('notesText');
-  const saveBtn = document.getElementById('notesSave');
-  const cancelBtn = document.getElementById('notesCancel');
-  if (!modal || !textarea) return;
+function renderPagination(total, totalPages) {
+  const box = $('pagination');
+  box.replaceChildren();
+  if (totalPages <= 1) {
+    if (total) {
+      const info = document.createElement('span');
+      info.className = 'pagination-info';
+      info.textContent = `${total} sesion${total === 1 ? '' : 'es'}`;
+      box.appendChild(info);
+    }
+    return;
+  }
 
-  textarea.value = currentNotes;
+  const button = (label, page, disabled, active) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.disabled = !!disabled;
+    if (active) b.classList.add('active');
+    b.onclick = () => { currentPage = page; renderSessions(); };
+    return b;
+  };
+
+  box.appendChild(button('‹', currentPage - 1, currentPage <= 1));
+  const maxVisible = 7;
+  let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+  const end = Math.min(totalPages, start + maxVisible - 1);
+  start = Math.max(1, end - maxVisible + 1);
+  for (let i = start; i <= end; i++) box.appendChild(button(String(i), i, false, i === currentPage));
+  box.appendChild(button('›', currentPage + 1, currentPage >= totalPages));
+
+  const info = document.createElement('span');
+  info.className = 'pagination-info';
+  info.textContent = `${(currentPage - 1) * PAGE_SIZE + 1}–${Math.min(currentPage * PAGE_SIZE, total)} de ${total}`;
+  box.appendChild(info);
+}
+
+function updateBulkBar() {
+  const bar = $('bulkBar');
+  bar.style.display = selectedIds.size ? 'flex' : 'none';
+  $('bulkCount').textContent = `${selectedIds.size} seleccionada${selectedIds.size === 1 ? '' : 's'}`;
+}
+
+function localDateTimeValue(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
+function openSessionEditor(sessionId, { focusUrl = false } = {}) {
+  const session = sessions.find(s => s.id === sessionId);
+  if (!session) return;
+
+  const modal = $('sessionEditModal');
+  const topic = $('editSessionTopic');
+  topic.replaceChildren();
+  for (const t of [...topics].sort((a, b) => a.name.localeCompare(b.name, 'es'))) {
+    topic.appendChild(new Option(t.archived ? `${t.name} (archivado)` : t.name, String(t.id)));
+  }
+  topic.value = String(session.topicId);
+  $('editSessionStart').value = localDateTimeValue(session.startISO);
+  $('editSessionDuration').value = String(+(session.durationSec / 60).toFixed(2));
+  $('editSessionUrl').value = session.url || '';
+  $('editSessionNotes').value = session.notes || '';
   modal.style.display = 'flex';
-  textarea.focus();
 
   const close = () => { modal.style.display = 'none'; };
-
-  cancelBtn.onclick = close;
+  $('sessionEditCancel').onclick = close;
   modal.onclick = (e) => { if (e.target === modal) close(); };
+  $('sessionEditSave').onclick = async () => {
+    const startValue = $('editSessionStart').value;
+    const durationMin = Number($('editSessionDuration').value);
+    const url = $('editSessionUrl').value.trim();
+    if (!startValue || !Number.isFinite(durationMin) || durationMin < 0) {
+      toast('Revisa la fecha y la duración', 'warning');
+      return;
+    }
+    if (url && !safeUrl(url)) {
+      toast('La URL debe empezar por http:// o https://', 'warning');
+      $('editSessionUrl').focus();
+      return;
+    }
+    try {
+      await patch(`/api/sessions/${sessionId}`, {
+        topicId: Number(topic.value),
+        startISO: new Date(startValue).toISOString(),
+        durationSec: Math.round(durationMin * 60),
+        url,
+        notes: $('editSessionNotes').value,
+      });
+      close();
+      toast('Sesión actualizada', 'success');
+      await refreshData();
+    } catch (e) { toast(e.message, 'error'); }
+  };
 
-  saveBtn.onclick = async () => {
-    await fetch(`/api/sessions/${sessionId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ notes: textarea.value })
-    });
-    close();
-    toast('Notas guardadas', 'success');
-    await refreshAll();
+  requestAnimationFrame(() => (focusUrl ? $('editSessionUrl') : topic).focus());
+}
+
+// ── Filtros ─────────────────────────────────────────────────────────────────
+
+function populateFilters() {
+  const topicSel = $('filterTopic');
+  const prevTopic = topicSel.value;
+  topicSel.replaceChildren();
+  topicSel.appendChild(new Option('Todos', 'all'));
+  for (const t of [...topics].sort((a, b) => a.name.localeCompare(b.name, 'es'))) {
+    topicSel.appendChild(new Option(t.name, String(t.id)));
+  }
+  topicSel.value = prevTopic || 'all';
+
+  const years = [...new Set(sessions.filter(s => !s.active).map(s => new Date(s.startISO).getFullYear()))].sort((a, b) => b - a);
+  const yearSel = $('filterYear');
+  const prevYear = yearSel.value;
+  yearSel.replaceChildren();
+  yearSel.appendChild(new Option('Todos', 'all'));
+  for (const y of years) yearSel.appendChild(new Option(String(y), String(y)));
+  yearSel.value = prevYear || 'all';
+
+  const monthSel = $('filterMonth');
+  if (!monthSel.options.length) {
+    monthSel.appendChild(new Option('Todos', 'all'));
+    const names = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    names.forEach((n, i) => monthSel.appendChild(new Option(n, String(i + 1))));
+  }
+
+}
+
+// ── Gestión de temas ────────────────────────────────────────────────────────
+
+function renderTopicList() {
+  const list = $('topicList');
+  const showArchived = $('showArchived').checked;
+  list.replaceChildren();
+
+  const visible = topics
+    .filter(t => showArchived || !t.archived)
+    .sort((a, b) => a.name.localeCompare(b.name, 'es'));
+
+  $('topicsHint').textContent = `${topics.filter(t => !t.archived).length} activos · ${topics.filter(t => t.archived).length} archivados`;
+
+  for (const t of visible) {
+    const row = document.createElement('div');
+    row.className = 'topic-row' + (t.archived ? ' is-archived' : '');
+
+    const color = document.createElement('input');
+    color.type = 'color';
+    color.value = /^#[0-9a-f]{6}$/i.test(t.color || '') ? t.color : '#7aa2f7';
+    color.title = t.paletteSlot ? `Slot ${t.paletteSlot} de la paleta validada` : 'Color propio';
+    color.onchange = () => save(t.id, { color: color.value });
+
+    const name = document.createElement('input');
+    name.className = 'topic-name-input';
+    name.value = t.name;
+    name.onchange = () => {
+      const value = name.value.trim();
+      if (!value || value === t.name) { name.value = t.name; return; }
+      save(t.id, { name: value });
+    };
+
+    const count = document.createElement('span');
+    count.className = 'topic-count';
+    count.textContent = `${t.sessionCount} ses.`;
+
+    const archive = document.createElement('button');
+    archive.className = 'btn-icon';
+    archive.textContent = t.archived ? '📤' : '📥';
+    archive.title = t.archived ? 'Desarchivar' : 'Archivar (se oculta pero conserva el historial)';
+    archive.onclick = () => save(t.id, { archived: !t.archived });
+
+    const merge = document.createElement('button');
+    merge.className = 'btn-icon';
+    merge.textContent = '⇄';
+    merge.title = 'Fusionar con otro tema';
+    merge.onclick = () => openMerge(t);
+
+    const del = document.createElement('button');
+    del.className = 'btn-trash';
+    del.textContent = '🗑';
+    del.title = t.sessionCount ? 'Tiene sesiones: archívalo o fusiónalo' : 'Borrar tema';
+    del.onclick = async () => {
+      if (!confirm(`¿Borrar el tema "${t.name}"?`)) return;
+      try {
+        await api(`/api/topics/${t.id}`, { method: 'DELETE' });
+        toast('Tema borrado', 'success');
+        await refreshData();
+      } catch (e) { toast(e.message, 'error'); }
+    };
+
+    row.append(color, name, count, archive, merge, del);
+    list.appendChild(row);
+  }
+
+  async function save(id, body) {
+    try {
+      await patch(`/api/topics/${id}`, body);
+      await refreshData();
+    } catch (e) { toast(e.message, 'error'); await refreshData(); }
+  }
+}
+
+function openMerge(topic) {
+  mergeSourceId = topic.id;
+  const modal = $('mergeModal');
+  $('mergeText').textContent = `Las ${topic.sessionCount} sesiones de "${topic.name}" pasarán al tema que elijas, y "${topic.name}" desaparecerá. No se puede deshacer.`;
+  const select = $('mergeTarget');
+  select.replaceChildren();
+  for (const t of topics.filter(t => t.id !== topic.id).sort((a, b) => a.name.localeCompare(b.name, 'es'))) {
+    select.appendChild(new Option(t.name, String(t.id)));
+  }
+  modal.style.display = 'flex';
+
+  const close = () => { modal.style.display = 'none'; mergeSourceId = null; };
+  $('mergeCancel').onclick = close;
+  modal.onclick = (e) => { if (e.target === modal) close(); };
+  $('mergeConfirm').onclick = async () => {
+    try {
+      const result = await post(`/api/topics/${mergeSourceId}/merge`, { targetId: Number(select.value) });
+      close();
+      toast(`${result.moved} sesiones movidas a ${result.target.name}`, 'success');
+      await refreshData();
+    } catch (e) { toast(e.message, 'error'); }
   };
 }
 
-function monthKeyFromDate(iso) {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-function describeMonth(key) {
-  if (!key) return '';
-  const [year, month] = key.split('-').map(Number);
-  const date = new Date(year, (month || 1) - 1, 1);
-  return date.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
-}
-function populateMonthFilter(sessions) {
-  const select = document.getElementById('filterMonth');
-  if (!select) return;
-  const monthSet = new Set();
-  for (const s of sessions) {
-    const key = monthKeyFromDate(s.startISO);
-    if (key) monthSet.add(key);
-  }
-  const options = Array.from(monthSet).sort().reverse();
-  select.innerHTML = '<option value="all">Todos</option>' + options.map(k => `<option value="${k}">${describeMonth(k)}</option>`).join('');
-}
-function applySessionFilters() {
-  const monthSel = document.getElementById('filterMonth');
-  const typeSel = document.getElementById('filterType');
-  const yearSel = document.getElementById('filterYear');
-  const catSel = document.getElementById('filterCategory');
-  const urlSel = document.getElementById('filterUrl');
-  const monthVal = monthSel ? monthSel.value : 'all';
-  const typeVal = typeSel ? typeSel.value : 'all';
-  const yearVal = yearSel ? yearSel.value : 'all';
-  const catVal = catSel ? catSel.value : 'all';
-  const urlVal = urlSel ? urlSel.value : 'all';
-  return allSessions.filter(s => {
-    const matchesMonth = monthVal === 'all' || monthKeyFromDate(s.startISO) === monthVal;
-    const matchesType = typeVal === 'all' || (s.sessionType || '').toLowerCase() === typeVal;
-    const matchesYear = yearVal === 'all' || yearFromDate(s.startISO) === yearVal;
-    const matchesCat = catVal === 'all' || (s.category || '') === catVal;
-    const hasUrl = !!(s.url && s.url.trim());
-    const matchesUrl = urlVal === 'all' || (urlVal === 'with' ? hasUrl : !hasUrl);
-    return matchesMonth && matchesType && matchesYear && matchesCat && matchesUrl;
-  });
-}
-function yearFromDate(iso) {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return String(d.getFullYear());
-}
-function populateYearFilter(sessions) {
-  const select = document.getElementById('filterYear');
-  if (!select) return;
-  const years = new Set();
-  for (const s of sessions) {
-    const y = yearFromDate(s.startISO);
-    if (y) years.add(y);
-  }
-  const options = Array.from(years).sort().reverse();
-  select.innerHTML = '<option value="all">Todos</option>' + options.map(y => `<option value="${y}">${y}</option>`).join('');
-}
-function populateCategoryFilter(sessions) {
-  const select = document.getElementById('filterCategory');
-  if (!select) return;
-  const catSet = new Set(configCategories || []);
-  for (const s of sessions || []) { if (s.category) catSet.add(s.category); }
-  const cats = Array.from(catSet).sort();
-  select.innerHTML = '<option value="all">Todas</option>' + cats.map(c => `<option value="${c}">${c}</option>`).join('');
-  applyCategoryColor(select);
+// ── Ajustes ─────────────────────────────────────────────────────────────────
+
+function renderSettings() {
+  $('cfgDuration').value = settings.defaultDurationMin || 90;
+  $('durationVal').textContent = `${settings.defaultDurationMin || 90} min`;
+  $('cfgDefaultMode').value = settings.defaultMode || 'open';
+  $('cfgAutoStop').value = String(settings.autoStopOnSprintEnd !== false);
+  $('cfgWeeklyGoal').value = Math.min(168, Math.max(1, Number(settings.weeklyGoalHours) || 15));
 }
 
-const categoryPalette = ['#7aa2f7', '#f7768e', '#bb9af7', '#0db9d7', '#9ece6a', '#e0af68', '#ff9e64', '#c0caf5', '#565f89'];
-let categoryColorMap = new Map();
-let categoryColors = {};
-let configCategories = [];
-let ws;
-let rcUrlInput;
-let allSessions = [];
-let remoteState = { state: 'idle', durationSec: 5400, remainingSec: 5400, category: '', sessionName: '', sessionType: 'privada' };
-function collectAllCategories(extra = []) {
-  const set = new Set();
-  (configCategories || []).forEach(c => c && set.add(c));
-  (allSessions || []).forEach(s => { if (s && s.category) set.add(s.category); });
-  (extra || []).forEach(c => c && set.add(c));
-  return Array.from(set).sort();
-}
-function getRandomPaletteColor(used = []) {
-  const palette = categoryPalette;
-  const available = palette.filter(c => !used.includes(c));
-  const source = available.length ? available : palette;
-  return source[Math.floor(Math.random() * source.length)];
-}
-function ensureCategoryColor(name) {
-  if (!name) return categoryPalette[0];
-  if (!categoryColors[name]) {
-    categoryColors[name] = getRandomPaletteColor(Object.values(categoryColors));
-  }
-  return categoryColors[name];
-}
-function assignCategoryColors(extra = []) {
-  const categories = collectAllCategories(extra);
-  categoryColorMap = new Map();
-  categories.forEach(cat => {
-    const color = ensureCategoryColor(cat);
-    categoryColorMap.set(cat, color);
-  });
-  refreshBadgeColors();
-}
-function getCategoryColor(cat) {
-  if (!cat) return categoryPalette[0];
-  if (categoryColorMap.has(cat)) return categoryColorMap.get(cat);
-  const color = ensureCategoryColor(cat);
-  categoryColorMap.set(cat, color);
-  return color;
-}
-function applyCategoryColor(select) {
-  if (!select) return;
-  const value = select.value;
-  if (!value || value === 'all') {
-    select.classList.remove('colorized-select');
-    select.style.removeProperty('--cat-color');
-    select.style.removeProperty('color');
-    select.style.removeProperty('border-color');
-    return;
-  }
-  const color = getCategoryColor(value);
-  if (!color) {
-    select.classList.remove('colorized-select');
-    select.style.removeProperty('--cat-color');
-    select.style.removeProperty('color');
-    select.style.removeProperty('border-color');
-    return;
-  }
-  select.classList.add('colorized-select');
-  select.style.setProperty('--cat-color', color);
-  select.style.color = color;
-  select.style.borderColor = color;
-}
-function refreshBadgeColors() {
-  document.querySelectorAll('.cat-badge[data-cat]').forEach(el => {
-    const cat = el.getAttribute('data-cat');
-    if (!cat) return;
-    const color = getCategoryColor(cat);
-    if (color) el.style.setProperty('--cat-color', color);
-  });
-}
-function formatClock(sec) {
-  const total = Math.max(0, Math.floor(Number(sec) || 0));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
-function renderRemoteTimer() {
-  const valEl = document.getElementById('rcTimerValue');
-  const stateEl = document.getElementById('rcTimerState');
-  const elapsedEl = document.getElementById('rcTimerElapsed');
-  const barEl = document.getElementById('rcTimerProgress');
-  const timerEl = document.querySelector('.rc-timer');
-  if (!valEl || !stateEl || !elapsedEl) return;
-  const duration = Math.max(1, Number(remoteState.durationSec) || 1);
-  const remaining = Math.max(0, Math.min(duration, Number(remoteState.remainingSec) || 0));
-  const elapsed = Math.max(0, duration - remaining);
-  valEl.textContent = formatClock(remaining);
-  const stateMap = { running: 'En curso', paused: 'En pausa', idle: 'En espera' };
-  const catLabel = remoteState.sessionName || remoteState.category || 'Sin categoría';
-  stateEl.textContent = `${stateMap[remoteState.state] || '—'} — ${catLabel}`;
-  elapsedEl.textContent = `Transcurrido ${formatClock(elapsed)} / ${formatClock(duration)}`;
-  if (barEl) {
-    const pct = Math.max(0, Math.min(100, (elapsed / duration) * 100));
-    barEl.style.width = `${pct}%`;
-  }
-  if (timerEl) timerEl.setAttribute('data-state', remoteState.state || 'idle');
+// ── WebSocket ───────────────────────────────────────────────────────────────
 
-  // Pomodoro status sync
-  const pomStatus = document.getElementById('pomodoroStatus');
-  const pomCheck = document.getElementById('pomodoroEnabled');
-  const pomControls = document.getElementById('pomodoroControls');
-  const pom = remoteState.pomodoro;
-  if (pom && pom.enabled) {
-    if (pomCheck && !pomCheck.checked) { pomCheck.checked = true; }
-    if (pomControls) pomControls.style.display = 'flex';
-    if (pomStatus) {
-      const phaseLabel = pom.phase === 'break' ? 'DESCANSO' : 'TRABAJO';
-      pomStatus.textContent = `${phaseLabel} — Round ${pom.round + (pom.phase === 'work' ? 1 : 0)}/${pom.totalRounds}`;
-    }
-  } else {
-    if (pomStatus) pomStatus.textContent = '';
-  }
-}
-function updateRemoteState(next = {}) {
-  remoteState = { ...remoteState, ...next };
-  renderRemoteTimer();
-}
-async function fetchRemoteState() {
-  try {
-    const resp = await fetch('/api/state');
-    if (!resp.ok) return;
-    const data = await resp.json();
-    updateRemoteState(data);
-    updateUrlInput(data.sessionUrl || '');
-  } catch (_) { }
-}
-
-function updateUrlInput(value) {
-  if (!rcUrlInput) return;
-  const next = value || '';
-  if (rcUrlInput.value !== next) rcUrlInput.value = next;
-}
 function setWsIndicator(online) {
-  const el = document.getElementById('wsStatus');
-  if (!el) return;
+  const el = $('wsStatus');
   el.classList.toggle('ws-on', online);
   el.classList.toggle('ws-off', !online);
   el.title = online ? 'Conectado al servidor' : 'Desconectado';
 }
 
-function connectBus() {
+function connectWS() {
   try {
-    const wsHost = window.location.hostname || '127.0.0.1';
-    ws = new WebSocket(`ws://${wsHost}:8765`);
+    // Host, protocolo y puerto salen de la instancia HTTP que sirve el panel.
+    // Así una instancia de pruebas no escucha por accidente a otra app en 8765.
+    const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${scheme}://${location.hostname}:${runtimeWsPort}`);
     ws.onopen = () => setWsIndicator(true);
     ws.onmessage = async (ev) => {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'state') { remote = msg.payload; renderTimer(); }
+      else if (msg.type === 'session:complete') { toast(`Sesión guardada: ${msg.payload.topic} · ${human(msg.payload.durationSec)}`, 'success'); await refreshData(); }
+      else if (msg.type === 'alarm') { toast('Objetivo del sprint alcanzado — sigues en prórroga', 'warning', 8000); }
+      else if (msg.type === 'topics:update') { await refreshData(); }
+      else if (msg.type === 'settings:update') { settings = msg.payload; renderSettings(); renderTimer(); }
+    };
+    ws.onclose = () => { ws = null; setWsIndicator(false); setTimeout(connectWS, 2000); };
+    ws.onerror = () => { };
+  } catch { setTimeout(connectWS, 2000); }
+}
+
+// ── Carga de datos ──────────────────────────────────────────────────────────
+
+function rangeParams() {
+  if (statsRange === 'all') return '';
+  const days = Number(statsRange);
+  const from = new Date(Date.now() - days * 86400000).toISOString();
+  return `?from=${encodeURIComponent(from)}`;
+}
+
+async function refreshData() {
+  const [t, s, st, health] = await Promise.all([
+    api('/api/topics?all=true'),
+    api('/api/sessions'),
+    api(`/api/stats${rangeParams()}`),
+    api('/api/health').catch(() => null),
+  ]);
+  topics = t;
+  sessions = s;
+  stats = st;
+
+  populateFilters();
+  renderKPIs();
+  renderCharts();
+  renderHeatmap();
+  renderCalendar();
+  renderSessions();
+  renderTopicList();
+  renderTopicGrid();
+  if (health) {
+    runtimeWsPort = Number(health.wsPort) || runtimeWsPort;
+    $('dbPathNote').textContent = `Base de datos: ${health.db} · ${health.sessions} sesiones`;
+  }
+}
+
+// ── Arranque ────────────────────────────────────────────────────────────────
+
+function initTheme() {
+  const btn = $('themeToggle');
+  // El head ya decidió el tema antes de la primera pintura. Aquí solo conectamos
+  // el botón y mantenemos el mismo atributo raíz al cambiarlo.
+  const light = document.documentElement.dataset.theme === 'light';
+  btn.textContent = light ? '☀️' : '🌙';
+  btn.onclick = () => {
+    const nowLight = document.documentElement.dataset.theme !== 'light';
+    document.documentElement.dataset.theme = nowLight ? 'light' : 'dark';
+    localStorage.setItem('animatek-theme', nowLight ? 'light' : 'dark');
+    btn.textContent = nowLight ? '☀️' : '🌙';
+    renderCharts();       // los colores de serie cambian por modo
+  };
+}
+
+function showView(view, { remember = true } = {}) {
+  activeView = view === 'stats' ? 'stats' : 'control';
+  document.querySelectorAll('[data-view]').forEach(section => {
+    section.hidden = section.dataset.view !== activeView;
+  });
+  document.querySelectorAll('[data-view-target]').forEach(button => {
+    button.setAttribute('aria-selected', String(button.dataset.viewTarget === activeView));
+  });
+  if (remember) localStorage.setItem('90minutos-view', activeView);
+  if (activeView === 'stats') requestAnimationFrame(renderCharts);
+}
+
+function initViews() {
+  const requested = new URLSearchParams(location.search).get('view');
+  const initial = requested || localStorage.getItem('90minutos-view') || 'control';
+  showView(initial, { remember: false });
+  document.querySelectorAll('[data-view-target]').forEach(button => {
+    button.onclick = () => showView(button.dataset.viewTarget);
+  });
+}
+
+function wireControls() {
+  $('rcPause').onclick = () => post('/api/timer/pause').catch(e => toast(e.message, 'error'));
+  $('rcResume').onclick = () => post('/api/timer/resume').catch(e => toast(e.message, 'error'));
+  $('rcExtend').onclick = () => post('/api/timer/extend', { min: 10 }).catch(e => toast(e.message, 'error'));
+  $('rcStop').onclick = async () => {
+    try { await post('/api/timer/stop'); await refreshData(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  $('rcDiscard').onclick = async () => {
+    if (!confirm('¿Descartar la sesión en curso? No se guardará en el historial.')) return;
+    try { await post('/api/timer/discard'); toast('Sesión descartada', 'warning'); await refreshData(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+
+  const setMode = async (mode) => {
+    preferredMode = mode;
+    if (remote.state !== 'idle') {
       try {
-        const msg = JSON.parse(ev.data);
-        if (msg.type === 'session:complete') { await refreshAll(); updateUrlInput(''); }
-        if (msg.type === 'state' && msg.payload) {
-          updateRemoteState(msg.payload);
-          updateUrlInput(msg.payload.sessionUrl || '');
-        }
-      } catch (e) { console.warn('[WS] parse error', e); }
-    };
-    ws.onclose = () => {
-      ws = null;
-      setWsIndicator(false);
-      setTimeout(connectBus, 2000);
-    };
-  } catch (e) { console.warn('[WS] connect error', e); }
-}
-function sendCmd(action, payload) { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'command', action, payload })); }
-function populateCategorySelect(cfg) {
-  const sel = document.getElementById('rcCategory'); if (!sel) return; sel.innerHTML = '';
-  for (const c of collectAllCategories()) { const o = document.createElement('option'); o.value = c; o.textContent = c; sel.appendChild(o); }
-  applyCategoryColor(sel);
-}
-async function setOpenSheetLink() {
-  const id = await getSheetId();
-  const a = document.getElementById('openSheet');
-  a.href = id ? ('https://docs.google.com/spreadsheets/d/' + id + '/edit') : '#';
-}
-
-async function refreshAll() {
-  const [stats, sessions] = await Promise.all([loadStats(), loadSessions()]);
-  allSessions = sortSessionsByStart(sessions || []);
-  assignCategoryColors();
-  populateCategorySelect({});
-
-  renderStats(stats);
-  populateMonthFilter(allSessions);
-  populateYearFilter(allSessions);
-  populateCategoryFilter(allSessions);
-  renderSessions(applySessionFilters());
-}
-
-function renderTemplateQuickstart(cfg) {
-  const container = document.getElementById('templateQuickstart');
-  if (!container) return;
-  container.innerHTML = '';
-  const templates = cfg.templates || [];
-  for (const t of templates) {
-    const btn = document.createElement('button');
-    btn.className = 'btn-template';
-    btn.textContent = `${t.name} (${t.durationMin}m)`;
-    const color = getCategoryColor(t.category);
-    btn.style.setProperty('--cat-color', color);
-    btn.title = `${t.category} · ${t.sessionType} · ${t.durationMin} min`;
-    btn.onclick = () => {
-      sendCmd('setCategory', t.category);
-      sendCmd('setDurationSec', t.durationMin * 60);
-      sendCmd('setSessionType', t.sessionType);
-      // Update local UI selects
-      const rcCat = document.getElementById('rcCategory');
-      if (rcCat) { rcCat.value = t.category; applyCategoryColor(rcCat); }
-      const rcType = document.getElementById('rcSessionType');
-      if (rcType) rcType.value = t.sessionType;
-      const durInput = document.getElementById('cfgDuration');
-      const durVal = document.getElementById('durationVal');
-      if (durInput) { durInput.value = t.durationMin; }
-      if (durVal) durVal.textContent = `${t.durationMin} min`;
-      sendCmd('start');
-      toast(`Template "${t.name}" iniciado`, 'success');
-    };
-    container.appendChild(btn);
-  }
-}
-
-function renderTemplateList(cfg) {
-  const list = document.getElementById('templateList');
-  if (!list) return;
-  list.innerHTML = '';
-  const templates = cfg.templates || [];
-  for (let i = 0; i < templates.length; i++) {
-    const t = templates[i];
-    const row = document.createElement('div');
-    row.className = 'template-row';
-    const color = getCategoryColor(t.category);
-    row.innerHTML = `
-      <span class="template-name" style="color:${color}">${escapeHTML(t.name)}</span>
-      <span class="template-meta">${escapeHTML(t.category)} · ${Number(t.durationMin) || 0}m · ${escapeHTML(t.sessionType)}</span>
-    `;
-    const delBtn = document.createElement('button');
-    delBtn.className = 'btn-delete-cat';
-    delBtn.innerHTML = '✕';
-    delBtn.title = 'Eliminar template';
-    delBtn.onclick = () => {
-      cfg.templates = (cfg.templates || []).filter((_, idx) => idx !== i);
-      renderTemplateList(cfg);
-      renderTemplateQuickstart(cfg);
-    };
-    row.appendChild(delBtn);
-    list.appendChild(row);
-  }
-}
-
-async function main() {
-  // Planning Logic
-  const taskInput = document.getElementById('currentTask');
-  if (taskInput) {
-    // Sync with remote state
-    taskInput.onchange = () => {
-      sendCmd('setSessionName', taskInput.value.trim()); // Using sessionName as "Task" for now
-    };
-  }
-
-  // To-Do List Logic
-  const todoList = document.getElementById('todoList');
-  const newTodoInput = document.getElementById('newTodo');
-  const addTodoBtn = document.getElementById('addTodo');
-
-  let todos = JSON.parse(localStorage.getItem('animatek-todos') || '[]');
-
-  function renderTodos() {
-    if (!todoList) return;
-    todoList.innerHTML = '';
-    todos.forEach((todo, idx) => {
-      const li = document.createElement('li');
-      li.className = `todo-item ${todo.done ? 'done' : ''}`;
-      li.innerHTML = `
-        <input type="checkbox" class="todo-checkbox" ${todo.done ? 'checked' : ''}>
-        <span class="todo-text">${todo.text}</span>
-        <button class="btn-del-todo">✕</button>
-      `;
-
-      const checkbox = li.querySelector('.todo-checkbox');
-      checkbox.onchange = () => {
-        todos[idx].done = checkbox.checked;
-        saveTodos();
-        renderTodos();
-      };
-
-      const delBtn = li.querySelector('.btn-del-todo');
-      delBtn.onclick = () => {
-        todos.splice(idx, 1);
-        saveTodos();
-        renderTodos();
-      };
-
-      todoList.appendChild(li);
-    });
-  }
-
-  function saveTodos() {
-    localStorage.setItem('animatek-todos', JSON.stringify(todos));
-  }
-
-  if (addTodoBtn && newTodoInput) {
-    const addTodo = () => {
-      const text = newTodoInput.value.trim();
-      if (!text) return;
-      todos.push({ text, done: false });
-      saveTodos();
-      renderTodos();
-      newTodoInput.value = '';
-    };
-    addTodoBtn.onclick = addTodo;
-    newTodoInput.onkeydown = (e) => { if (e.key === 'Enter') addTodo(); };
-  }
-
-  renderTodos();
-
-  // Update task input when remote state changes
-  const originalUpdateRemoteState = updateRemoteState;
-  updateRemoteState = (next = {}) => {
-    originalUpdateRemoteState(next); // Call original
-    // Update task input if it's different and not focused (to avoid overwriting user typing)
-    if (taskInput && document.activeElement !== taskInput) {
-      const val = next.sessionName || '';
-      if (taskInput.value !== val) taskInput.value = val;
+        const body = { mode };
+        if (mode === 'sprint') body.plannedMin = settings.defaultDurationMin || 90;
+        await post('/api/timer/mode', body);
+      } catch (e) { toast(e.message, 'error'); }
     }
+    renderTimer();
+  };
+  $('modeOpen').onclick = () => setMode('open');
+  $('modeSprint').onclick = () => setMode('sprint');
+
+  $('topicSearch').oninput = debounce(renderTopicGrid, 120);
+
+  // Metadatos de la sesión en curso, sin machacar mientras se escribe.
+  const pushMeta = debounce(async (body) => {
+    if (remote.state === 'idle') return;
+    try { await post('/api/timer/meta', body); } catch (e) { toast(e.message, 'error'); }
+  }, 600);
+  $('rcUrl').oninput = () => pushMeta({ url: $('rcUrl').value.trim() });
+  $('rcNotes').oninput = () => pushMeta({ notes: $('rcNotes').value });
+
+  $('quickTopicForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const input = $('quickTopicName');
+    const name = input.value.trim();
+    if (!name) { input.focus(); return; }
+    try {
+      let topic = topics.find(t => t.name.localeCompare(name, 'es', { sensitivity: 'accent' }) === 0);
+      if (topic?.archived) topic = await patch(`/api/topics/${topic.id}`, { archived: false });
+      if (!topic) topic = await post('/api/topics', { name });
+      input.value = '';
+      await startTopic(topic);
+    } catch (error) { toast(error.message, 'error'); }
   };
 
-  document.getElementById('btnAuth').onclick = () => window.open('/api/google/auth', '_blank');
-  const cfg = await loadConfig();
-  renderConfig(cfg);
-  populateCategorySelect(cfg);
-
-  // Templates
-  renderTemplateQuickstart(cfg);
-  renderTemplateList(cfg);
-
-  document.getElementById('addTemplate').onclick = () => {
-    const nameInput = document.getElementById('newTemplateName');
-    const name = nameInput.value.trim();
-    if (!name) { toast('Escribe un nombre para el template', 'warning'); return; }
-    const rcCat = document.getElementById('rcCategory');
-    const rcType = document.getElementById('rcSessionType');
-    const durInput = document.getElementById('cfgDuration');
-    const tpl = {
-      name,
-      category: rcCat ? rcCat.value : '',
-      durationMin: durInput ? parseInt(durInput.value, 10) || 90 : 90,
-      sessionType: rcType ? rcType.value : 'privada'
+  document.querySelectorAll('.range-btn').forEach(btn => {
+    btn.onclick = async () => {
+      document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      statsRange = btn.dataset.range;
+      stats = await api(`/api/stats${rangeParams()}`);
+      renderCharts();
+      renderTopicGrid();
     };
-    if (!cfg.templates) cfg.templates = [];
-    cfg.templates.push(tpl);
-    nameInput.value = '';
-    renderTemplateList(cfg);
-    renderTemplateQuickstart(cfg);
-    toast(`Template "${name}" añadido`, 'success');
+  });
+
+  $('showArchived').onchange = renderTopicList;
+
+  for (const id of ['filterTopic', 'filterYear', 'filterMonth']) {
+    $(id).onchange = () => { currentPage = 1; renderSessions(); };
+  }
+  $('searchSessions').oninput = debounce(() => {
+    searchQuery = $('searchSessions').value.trim();
+    currentPage = 1;
+    renderSessions();
+  }, 250);
+  $('clearFilters').onclick = () => {
+    for (const id of ['filterTopic', 'filterYear', 'filterMonth']) $(id).value = 'all';
+    $('searchSessions').value = '';
+    searchQuery = '';
+    currentPage = 1;
+    renderSessions();
   };
 
-  // Include templates in save config
-  const origSaveClick = document.getElementById('saveCfg').onclick;
-  document.getElementById('saveCfg').onclick = async () => {
-    // Inject templates into cfg before save
-    const newCfg = {
-      ...cfg,
-      categories: [...(cfg.categories || [])],
-      categoryColors: { ...categoryColors },
-      templates: cfg.templates || [],
-      defaultDurationMin: parseInt(document.getElementById('cfgDuration').value, 10) || 90,
-      opacity: +document.getElementById('cfgOpacity').value
-    };
-    const saved = await saveConfig(newCfg);
-    configCategories = [...(saved.categories || [])];
-    categoryColors = { ...(saved.categoryColors || categoryColors) };
-    cfg.templates = saved.templates || [];
-    assignCategoryColors();
-    toast('Configuración guardada', 'success');
-    populateCategorySelect(saved);
-    populateCategoryFilter(allSessions);
-    renderTemplateQuickstart(saved);
-    renderTemplateList(cfg);
+  $('selectAll').onchange = () => {
+    const checked = $('selectAll').checked;
+    document.querySelectorAll('#sessions .session-check').forEach(cb => {
+      cb.checked = checked;
+      const id = Number(cb.dataset.sid);
+      if (checked) selectedIds.add(id); else selectedIds.delete(id);
+    });
+    updateBulkBar();
+  };
+  $('bulkDelete').onclick = async () => {
+    if (!selectedIds.size) return;
+    if (!confirm(`¿Borrar ${selectedIds.size} sesión(es)?`)) return;
+    try {
+      const r = await post('/api/sessions/bulk-delete', { ids: [...selectedIds] });
+      toast(`${r.removed} sesiones borradas`, 'success');
+      await refreshData();
+    } catch (e) { toast(e.message, 'error'); }
   };
 
-  await setOpenSheetLink();
-  await refreshAll();
+  $('cfgDuration').oninput = () => { $('durationVal').textContent = `${$('cfgDuration').value} min`; };
+  $('saveSettings').onclick = async () => {
+    try {
+      settings = await post('/api/settings', {
+        defaultDurationMin: Number($('cfgDuration').value) || 90,
+        defaultMode: $('cfgDefaultMode').value,
+        autoStopOnSprintEnd: $('cfgAutoStop').value === 'true',
+        weeklyGoalHours: Math.min(168, Math.max(1, Number($('cfgWeeklyGoal').value) || 15)),
+      });
+      preferredMode = remote.state === 'idle' ? settings.defaultMode : preferredMode;
+      renderSettings();
+      renderTimer();
+      renderKPIs();
+      toast('Ajustes guardados', 'success');
+    } catch (e) { toast(e.message, 'error'); }
+  };
 
-  document.getElementById('rcStart').onclick = () => sendCmd('start');
-  document.getElementById('rcPause').onclick = () => sendCmd('pause');
-  document.getElementById('rcResume').onclick = () => sendCmd('resume');
-  document.getElementById('rcReset').onclick = () => sendCmd('reset');
-  document.getElementById('rcFinish').onclick = () => sendCmd('finish');
-
-  const rcCat = document.getElementById('rcCategory');
-  if (rcCat) {
-    rcCat.onchange = () => {
-      applyCategoryColor(rcCat);
-      const v = rcCat.value;
-      sendCmd('setCategory', v);
-    };
-    applyCategoryColor(rcCat);
-  }
-  const rcType = document.getElementById('rcSessionType');
-  if (rcType) { rcType.onchange = () => sendCmd('setSessionType', rcType.value); }
-  rcUrlInput = document.getElementById('rcUrl');
-  if (rcUrlInput) {
-    rcUrlInput.onchange = () => sendCmd('setSessionUrl', rcUrlInput.value.trim());
-  }
-  // Pomodoro controls
-  const pomodoroCheck = document.getElementById('pomodoroEnabled');
-  const pomodoroControlsEl = document.getElementById('pomodoroControls');
-  const pomodoroWorkInput = document.getElementById('pomodoroWork');
-  const pomodoroBreakInput = document.getElementById('pomodoroBreak');
-  const pomodoroRoundsInput = document.getElementById('pomodoroRounds');
-
-  if (pomodoroCheck) {
-    pomodoroCheck.onchange = () => {
-      const on = pomodoroCheck.checked;
-      if (pomodoroControlsEl) pomodoroControlsEl.style.display = on ? 'flex' : 'none';
-      sendCmd('setPomodoroEnabled', on);
-      if (on) {
-        sendCmd('setPomodoroWork', Number(pomodoroWorkInput.value) || 25);
-        sendCmd('setPomodoroBreak', Number(pomodoroBreakInput.value) || 5);
-        sendCmd('setPomodoroRounds', Number(pomodoroRoundsInput.value) || 4);
-      }
-    };
-  }
-  if (pomodoroWorkInput) pomodoroWorkInput.onchange = () => sendCmd('setPomodoroWork', Number(pomodoroWorkInput.value) || 25);
-  if (pomodoroBreakInput) pomodoroBreakInput.onchange = () => sendCmd('setPomodoroBreak', Number(pomodoroBreakInput.value) || 5);
-  if (pomodoroRoundsInput) pomodoroRoundsInput.onchange = () => sendCmd('setPomodoroRounds', Number(pomodoroRoundsInput.value) || 4);
-
-  // Calendar navigation
-  const calPrevBtn = document.getElementById('calPrev');
-  const calNextBtn = document.getElementById('calNext');
-  if (calPrevBtn) {
-    calPrevBtn.onclick = () => {
-      calendarMonth--;
-      if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; }
-      renderCalendar(allSessions);
-    };
-  }
-  if (calNextBtn) {
-    calNextBtn.onclick = () => {
-      calendarMonth++;
-      if (calendarMonth > 11) { calendarMonth = 0; calendarYear++; }
-      renderCalendar(allSessions);
-    };
-  }
-
-  renderRemoteTimer();
-  await fetchRemoteState();
-  const monthSel = document.getElementById('filterMonth');
-  const typeSel = document.getElementById('filterType');
-  const yearSel = document.getElementById('filterYear');
-  const catSel = document.getElementById('filterCategory');
-  const urlSel = document.getElementById('filterUrl');
-  const clearFiltersBtn = document.getElementById('clearFilters');
-  if (monthSel) { monthSel.onchange = () => { currentPage = 1; renderSessions(applySessionFilters()); }; }
-  if (typeSel) { typeSel.onchange = () => { currentPage = 1; renderSessions(applySessionFilters()); }; }
-  if (yearSel) { yearSel.onchange = () => { currentPage = 1; renderSessions(applySessionFilters()); }; }
-  if (catSel) { catSel.onchange = () => { currentPage = 1; applyCategoryColor(catSel); renderSessions(applySessionFilters()); }; }
-  if (urlSel) { urlSel.onchange = () => { currentPage = 1; renderSessions(applySessionFilters()); }; }
-  // Search input
-  const searchInput = document.getElementById('searchSessions');
-  if (searchInput) {
-    searchInput.oninput = debounce(() => {
-      currentSearchQuery = searchInput.value.trim();
-      currentPage = 1;
-      renderSessions(applySessionFilters());
-    }, 300);
-  }
-
-  if (clearFiltersBtn) {
-    clearFiltersBtn.onclick = () => {
-      if (monthSel) monthSel.value = 'all';
-      if (typeSel) typeSel.value = 'all';
-      if (yearSel) yearSel.value = 'all';
-      if (catSel) { catSel.value = 'all'; applyCategoryColor(catSel); }
-      if (urlSel) urlSel.value = 'all';
-      if (searchInput) { searchInput.value = ''; currentSearchQuery = ''; }
-      currentPage = 1;
-      renderSessions(applySessionFilters());
-    };
-  }
-  const totalsHeader = document.getElementById('totalsHoursHeader');
-  if (totalsHeader) {
-    totalsHeader.onclick = () => {
-      totalsSortState = totalsSortState === 'none' ? 'desc' : totalsSortState === 'desc' ? 'asc' : 'none';
-      renderStats(latestStats || {});
-      const label = totalsSortState === 'desc' ? 'Horas ↓' : totalsSortState === 'asc' ? 'Horas ↑' : 'Horas';
-      totalsHeader.textContent = label;
-    };
-  }
-
-  // Backup
-  document.getElementById('backupBtn').onclick = async () => {
-    const resp = await fetch('/api/backup');
-    const data = await resp.json();
+  $('backupBtn').onclick = async () => {
+    const data = await api('/api/backup');
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `90minutos_backup_${new Date().toISOString().slice(0,10)}.json`;
+    a.download = `90minutos_backup_${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
     toast('Backup descargado', 'success');
   };
-
-  // Restore
-  document.getElementById('restoreBtn').onchange = async (e) => {
+  $('restoreBtn').onchange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (!confirm('Esto reemplazara TODA la config y sesiones actuales. Continuar?')) { e.target.value = ''; return; }
+    if (!confirm('Esto reemplazará TODOS los temas y sesiones actuales. ¿Continuar?')) { e.target.value = ''; return; }
     try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      const resp = await fetch('/api/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-      const result = await resp.json();
-      if (resp.ok) { toast(`Restore OK: ${result.sessions} sesiones`, 'success'); location.reload(); }
-      else { toast('Error: ' + (result.error || 'desconocido'), 'error'); }
-    } catch (err) { toast('Error al leer backup: ' + err.message, 'error'); }
+      const data = JSON.parse(await file.text());
+      const r = await post('/api/restore', data);
+      toast(`Restaurado: ${r.sessions} sesiones, ${r.topics} temas`, 'success');
+      await refreshData();
+    } catch (err) { toast(err.message, 'error'); }
     e.target.value = '';
   };
-
-  // Clear all sessions
-  document.getElementById('clearAll').onclick = async () => {
-    if (!allSessions.length) { toast('No hay sesiones', 'warning'); return; }
-    if (!confirm(`¿Borrar TODAS las ${allSessions.length} sesiones? Esta acción no se puede deshacer.`)) return;
-    await fetch('/api/sessions', { method: 'DELETE', headers: { 'X-Confirm-Delete': 'true' } });
-    toast('Todas las sesiones eliminadas', 'success');
-    await refreshAll();
+  $('clearAll').onclick = async () => {
+    const closed = sessions.filter(s => !s.active).length;
+    if (!closed) { toast('No hay sesiones', 'warning'); return; }
+    if (!confirm(`¿Borrar TODAS las ${closed} sesiones? No se puede deshacer.`)) return;
+    try {
+      await api('/api/sessions', { method: 'DELETE', headers: { 'X-Confirm-Delete': 'true' } });
+      toast('Historial borrado', 'success');
+      await refreshData();
+    } catch (e) { toast(e.message, 'error'); }
   };
 
-  // Import from Sheets
-  document.getElementById('importSheets').onclick = async () => {
-    const id = await getSheetId();
-    if (!id) { toast('Configura SHEET_ID en .env y conecta Google', 'warning'); return; }
-    const resp = await fetch('/api/sessions/importFromSheets', { method: 'POST' });
-    const data = await resp.json();
-    if (resp.ok) { toast(`Importadas ${data.imported} sesiones desde Sheets`, 'success'); await refreshAll(); }
-    else { toast('Error: ' + (data.error || 'desconocido'), 'error'); }
+  $('calPrev').onclick = () => {
+    calendarMonth--;
+    if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; }
+    renderCalendar();
+  };
+  $('calNext').onclick = () => {
+    calendarMonth++;
+    if (calendarMonth > 11) { calendarMonth = 0; calendarYear++; }
+    renderCalendar();
   };
 
-  // Export CSV
-  document.getElementById('exportCSV').onclick = () => {
-    if (!allSessions.length) { toast('No hay sesiones para exportar', 'warning'); return; }
-    const hdr = 'Categoria,DuracionMin,Lenguaje,Fecha,Sesion,Tipo,URL\n';
-    const rows = allSessions.map(s => {
-      const min = s.durationSec ? (s.durationSec / 60).toFixed(2) : (s.durationMin || 0);
-      const fecha = formatDateShort(s.startISO);
-      const esc = v => `"${String(v || '').replace(/"/g, '""')}"`;
-      return [esc(s.category), min, esc(s.language), fecha, esc(s.sessionName), esc(s.sessionType), esc(s.url)].join(',');
-    });
-    const csv = hdr + rows.join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `90minutos_sessions_${new Date().toISOString().slice(0,10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast('CSV exportado', 'success');
-  };
-
-  // Bulk operations
-  document.getElementById('bulkDelete').onclick = async () => {
-    if (!selectedSessionIds.size) return;
-    if (!confirm(`¿Borrar ${selectedSessionIds.size} sesión(es)?`)) return;
-    await fetch('/api/sessions/bulk-delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: Array.from(selectedSessionIds) })
-    });
-    toast(`${selectedSessionIds.size} sesión(es) eliminadas`, 'success');
-    await refreshAll();
-  };
-
-  document.getElementById('bulkExport').onclick = () => {
-    if (!selectedSessionIds.size) return;
-    const selected = allSessions.filter(s => selectedSessionIds.has(Number(s.id)));
-    if (!selected.length) { toast('No hay sesiones seleccionadas', 'warning'); return; }
-    const hdr = 'Categoria,DuracionMin,Lenguaje,Fecha,Sesion,Tipo,URL\n';
-    const rows = selected.map(s => {
-      const min = s.durationSec ? (s.durationSec / 60).toFixed(2) : (s.durationMin || 0);
-      const fecha = formatDateShort(s.startISO);
-      const esc = v => `"${String(v || '').replace(/"/g, '""')}"`;
-      return [esc(s.category), min, esc(s.language), fecha, esc(s.sessionName), esc(s.sessionType), esc(s.url)].join(',');
-    });
-    const csv = hdr + rows.join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `90minutos_selected_${new Date().toISOString().slice(0,10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast(`${selected.length} sesión(es) exportadas`, 'success');
-  };
-
-  // Keyboard shortcuts
+  // Espacio: pausa o reanuda lo que haya en curso.
   document.addEventListener('keydown', (e) => {
     const tag = (e.target.tagName || '').toLowerCase();
-    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
-
+    if (['input', 'textarea', 'select'].includes(tag)) return;
     if (e.key === ' ') {
       e.preventDefault();
-      if (remoteState.state === 'idle') sendCmd('start');
-      else if (remoteState.state === 'running') sendCmd('pause');
-      else if (remoteState.state === 'paused') sendCmd('resume');
-    }
-    if (e.key === 'r' || e.key === 'R') {
-      if (!e.ctrlKey && !e.metaKey) sendCmd('reset');
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-      e.preventDefault();
-      document.getElementById('saveCfg').click();
-    }
-    if (e.key === '?') {
-      const help = document.getElementById('shortcutHelp');
-      if (help) help.style.display = help.style.display === 'none' ? 'block' : 'none';
+      if (remote.state === 'running') $('rcPause').click();
+      else if (remote.state === 'paused') $('rcResume').click();
     }
   });
 
-  const refreshTimer = setInterval(refreshAll, 20000);
-  window.addEventListener('beforeunload', () => clearInterval(refreshTimer));
-  connectBus();
+  window.Charts.registerRedraw($('chartTopics'), renderCharts);
+}
+
+async function main() {
   initTheme();
+  initViews();
+  settings = await api('/api/settings');
+  preferredMode = settings.defaultMode || 'open';
+  renderSettings();
+
+  remote = await api('/api/state');
+  await refreshData();
+  renderTimer();
+
+  wireControls();
+  connectWS();
+
+  // Red de seguridad: si el WebSocket se cae, los datos no se quedan congelados.
+  setInterval(() => { if (!ws) refreshData().catch(() => { }); }, 30000);
 }
 
-function initTheme() {
-  const btn = document.getElementById('themeToggle');
-  const body = document.body;
-  const saved = localStorage.getItem('animatek-theme');
-  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-
-  // Default to dark if no preference, or respect system pref if not set
-  let isLight = saved === 'light';
-  if (!saved && !prefersDark) isLight = true; // If system is light, default to light? Or default to dark as per original design?
-  // Original design was dark. Let's stick to dark default unless explicitly light.
-
-  if (saved === 'light') {
-    body.classList.add('light-mode');
-    if (btn) btn.textContent = '☀️';
-  } else {
-    body.classList.remove('light-mode');
-    if (btn) btn.textContent = '🌙';
-  }
-
-  if (btn) {
-    btn.onclick = () => {
-      const isNowLight = body.classList.toggle('light-mode');
-      localStorage.setItem('animatek-theme', isNowLight ? 'light' : 'dark');
-      btn.textContent = isNowLight ? '☀️' : '🌙';
-    };
-  }
-}
-
-main();
+main().catch(e => {
+  console.error(e);
+  toast(`No se pudo cargar el panel: ${e.message}`, 'error', 10000);
+});

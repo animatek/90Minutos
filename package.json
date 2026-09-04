@@ -1,24 +1,23 @@
 {
   "name": "animatek-timer",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "private": true,
   "type": "module",
-  "description": "Timer de sesiones · Dashboard · Google Sheets · OBS Overlay",
+  "description": "Registro de tiempo por temas · SQLite local · Dashboard · Overlay OBS",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "dev": "node server/index.js",
-    "stop": "if [ -f .server.pid ]; then kill $(cat .server.pid) 2>/dev/null && rm -f .server.pid && echo '[90Minutos] Servidor detenido'; else echo '[90Minutos] No hay servidor corriendo'; fi",
-    "plugin:pack": "node scripts/pack-plugin.mjs",
-    "google:auth": "node scripts/open-auth.mjs",
-    "build": "echo \"No hay build: usa 'npm run dev'\""
+    "dev": "node --disable-warning=ExperimentalWarning server/index.js",
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "stop": "scripts/90minutos.sh stop",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.mjs",
+    "migrate": "node --disable-warning=ExperimentalWarning migrate/json-to-sqlite.mjs",
+    "recolor": "node --disable-warning=ExperimentalWarning migrate/recolor-topics.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "googleapis": "^144.0.0",
     "ws": "^8.18.0"
-  },
-  "devDependencies": {
-    "archiver": "^7.0.1",
-    "open": "^10.1.0"
   }
 }
